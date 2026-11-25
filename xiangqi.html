@@ -35,6 +35,14 @@
   .dot.capture { width: 11.4%; background: transparent; border: 3px solid rgba(185,28,28,.75); }
   .legend { display: flex; justify-content: space-between; color: #94a3b8; font-size: .9rem; margin-top: 10px; }
   .legend .you { color: #38bdf8; font-weight: 600; }
+  /* Ready-phase popup */
+  #readyOverlay { position: fixed; inset: 0; background: rgba(2,6,23,.75); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .readyCard { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 24px 28px; max-width: 420px; width: 100%; text-align: center; color: #e2e8f0; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+  .readyCard h2 { margin: 0 0 6px; font-size: 1.25rem; }
+  #readyCount { font-size: 3.2rem; font-weight: 800; color: #38bdf8; line-height: 1.15; margin: 8px 0 12px; }
+  #readyCount.timeout { font-size: 1.02rem; font-weight: 600; color: #fbbf24; }
+  .readyLine { font-size: 1rem; margin: 4px 0; color: #cbd5e1; }
+  #readyBtn { margin-top: 14px; font-size: 1.05rem; padding: 11px 22px; }
 </style>
 </head>
 <body>
@@ -81,6 +89,16 @@
       <div class="river"><span>楚 河</span><span>漢 界</span></div>
     </div>
     <div class="legend"><span id="legendBottom"></span><span id="legendTop"></span></div>
+  </div>
+
+  <div id="readyOverlay" style="display:none">
+    <div class="readyCard">
+      <h2>Cả hai người chơi đã vào phòng!</h2>
+      <div id="readyCount">30</div>
+      <div class="readyLine" id="myReadyLine">Bạn: Chưa sẵn sàng</div>
+      <div class="readyLine" id="oppReadyLine">Đối thủ: Chưa sẵn sàng</div>
+      <button id="readyBtn">✅ Sẵn sàng</button>
+    </div>
   </div>
 </main>
 <script>
@@ -210,6 +228,8 @@ var flipped = false;               /* guest (Black) sees board flipped */
 var myColor = localMode ? null : (isHost ? 'r' : 'b');
 var board, turn, selected, selMoves, lastMove, gameOver, started;
 var peer=null, conn=null, connected=false;
+var phase = localMode ? 'playing' : 'waiting'; /* 'waiting' | 'ready' | 'playing' */
+var myReady=false, oppReady=false, readyTimer=null, countLeft=30;
 
 var statusEl=document.getElementById('status'),
     roomInfoEl=document.getElementById('roomInfo'),
@@ -218,7 +238,12 @@ var statusEl=document.getElementById('status'),
     copyBtn=document.getElementById('copyBtn'),
     resignBtn=document.getElementById('resignBtn'),
     legendBottom=document.getElementById('legendBottom'),
-    legendTop=document.getElementById('legendTop');
+    legendTop=document.getElementById('legendTop'),
+    readyOverlay=document.getElementById('readyOverlay'),
+    readyCountEl=document.getElementById('readyCount'),
+    myReadyLine=document.getElementById('myReadyLine'),
+    oppReadyLine=document.getElementById('oppReadyLine'),
+    readyBtn=document.getElementById('readyBtn');
 
 function resetGame(){
   board=initialBoard(); turn='r'; selected=null; selMoves=[]; lastMove=null; gameOver=false;
@@ -234,6 +259,7 @@ function updateStatus(extra){
   setStatus(turn===myColor ? 'Lượt của bạn' : 'Chờ đối thủ…');
 }
 function endGame(winnerColor, reason){
+  if(!localMode) hideReadyPopup();
   gameOver=true; selected=null; selMoves=[];
   var name = winnerColor==='r' ? 'Quân Đỏ' : 'Quân Đen';
   setStatus('🏆 ' + name + ' thắng!' + (reason ? ' (' + reason + ')' : ''));
@@ -309,6 +335,7 @@ function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
 boardEl.addEventListener('click', function(ev){
   if(gameOver || !started) return;
+  if(!localMode && phase!=='playing') return;
   if(!localMode && (!connected || turn!==myColor)) return;
   var rect=boardEl.getBoundingClientRect();
   var px=(ev.clientX-rect.left)/rect.width, py=(ev.clientY-rect.top)/rect.height;
@@ -328,8 +355,12 @@ boardEl.addEventListener('click', function(ev){
 
 document.getElementById('restartBtn').addEventListener('click', function(){
   resetGame();
-  if(!localMode && conn && connected){ try{ conn.send({type:'restart'}); }catch(e){} }
-  if(!gameOver) updateStatus(localMode ? 'Ván mới — lượt quân Đỏ' : undefined);
+  if(!localMode && conn && connected){
+    try{ conn.send({type:'restart'}); }catch(e){}
+    enterReadyPhase();
+    return;
+  }
+  if(localMode) updateStatus('Ván mới — lượt quân Đỏ');
 });
 resignBtn.addEventListener('click', function(){
   if(localMode || gameOver || !connected) return;
@@ -350,11 +381,54 @@ function shareLink(){
   return u.toString();
 }
 
+/* ============ Ready phase (online only) ============ */
+function updateReadyUI(){
+  myReadyLine.textContent = 'Bạn: ' + (myReady ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+  oppReadyLine.textContent = 'Đối thủ: ' + (oppReady ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+  readyBtn.disabled = myReady;
+  readyBtn.textContent = myReady ? 'Đã sẵn sàng — chờ đối thủ…' : '✅ Sẵn sàng';
+}
+function stopCountdown(){ if(readyTimer){ clearInterval(readyTimer); readyTimer=null; } }
+function hideReadyPopup(){ stopCountdown(); readyOverlay.style.display='none'; }
+function enterReadyPhase(){
+  phase='ready'; myReady=false; oppReady=false; countLeft=30;
+  readyCountEl.textContent='30';
+  readyCountEl.classList.remove('timeout');
+  updateReadyUI();
+  readyOverlay.style.display='flex';
+  stopCountdown();
+  readyTimer=setInterval(function(){
+    countLeft--;
+    if(countLeft<=0){
+      countLeft=0; stopCountdown();
+      readyCountEl.textContent='Hết 30 giây — ván sẽ bắt đầu ngay khi cả hai cùng sẵn sàng.';
+      readyCountEl.classList.add('timeout');
+    } else {
+      readyCountEl.textContent=String(countLeft);
+    }
+  },1000);
+  setStatus('Cả hai đã vào phòng! Hãy bấm "Sẵn sàng" để bắt đầu ván.');
+}
+function maybeStartGame(){
+  if(phase==='ready' && myReady && oppReady){
+    hideReadyPopup();
+    phase='playing';
+    updateStatus();
+  }
+}
+readyBtn.addEventListener('click', function(){
+  if(localMode || phase!=='ready' || myReady) return;
+  myReady=true;
+  if(conn && connected){ try{ conn.send({type:'ready'}); }catch(e){} }
+  updateReadyUI();
+  maybeStartGame();
+});
+
 /* ============ Networking (PeerJS) ============ */
 function onConnOpen(){
   connected=true; started=true;
-  setStatus('Đã kết nối! ' + (isHost ? 'Bạn cầm quân Đỏ, đi trước.' : 'Bạn cầm quân Đen.'));
   resetGame();
+  enterReadyPhase();
 }
 function onData(data){
   if(!data || typeof data!=='object') return;
@@ -362,14 +436,19 @@ function onData(data){
     var fx=+data.fx, fy=+data.fy, tx=+data.tx, ty=+data.ty;
     if([fx,fy,tx,ty].some(isNaN)) return;
     if(board[fy] && board[fy][fx]) applyMove(fx,fy,tx,ty);
+  } else if(data.type==='ready'){
+    oppReady=true;
+    updateReadyUI();
+    maybeStartGame();
   } else if(data.type==='restart'){
     resetGame();
+    if(connected) enterReadyPhase();
   } else if(data.type==='resign'){
     endGame(myColor, 'đối thủ xin thua');
   }
 }
 function onConnGone(){
-  if(connected){ connected=false; setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.'); }
+  if(connected){ connected=false; hideReadyPopup(); phase='waiting'; setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.'); }
 }
 function setupConn(c){
   conn=c;

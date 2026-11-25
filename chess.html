@@ -51,6 +51,15 @@
   .promoBtns { display: flex; gap: 8px; }
   .promoBtns button { width: 64px; height: 64px; font-size: 40px; line-height: 1; border-radius: 10px; border: 1px solid #334155; background: #0f172a; cursor: pointer; }
   .promoBtns button:hover { border-color: #38bdf8; }
+  #readyOverlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .75); display: none; align-items: center; justify-content: center; z-index: 60; }
+  #readyOverlay.open { display: flex; }
+  .readyBox { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 28px; text-align: center; max-width: min(92vw, 420px); }
+  .readyBox h2 { margin: 0 0 8px; font-size: 1.25rem; }
+  #readyCount { font-size: 3.2rem; font-weight: 800; color: #38bdf8; line-height: 1.1; margin: 6px 0; }
+  #readyTimeout { color: #facc15; font-weight: 600; margin: 10px 0; }
+  .readyLine { margin: 4px 0; font-size: 1.02rem; }
+  #btnReady { margin-top: 14px; }
+  #btnReady:disabled { opacity: .65; cursor: default; }
 </style>
 </head>
 <body>
@@ -89,6 +98,17 @@
   <div class="promoBox">
     <p>Chọn quân phong cấp:</p>
     <div class="promoBtns" id="promoBtns"></div>
+  </div>
+</div>
+
+<div id="readyOverlay">
+  <div class="readyBox">
+    <h2>Cả hai người chơi đã vào phòng!</h2>
+    <div id="readyCount">30</div>
+    <p id="readyTimeout" style="display:none">Hết 30 giây — ván sẽ bắt đầu ngay khi cả hai cùng sẵn sàng.</p>
+    <div class="readyLine" id="readyMine">Bạn: Chưa sẵn sàng</div>
+    <div class="readyLine" id="readyOpp">Đối thủ: Chưa sẵn sàng</div>
+    <button class="btn primary" id="btnReady" type="button">✅ Sẵn sàng</button>
   </div>
 </div>
 
@@ -337,6 +357,9 @@ let selMoves = [];           // nước hợp lệ của quân đang chọn
 let lastMove = null;
 let gameOver = false, winner = null, endReason = null, resignBy = null;
 let promoPending = null;
+let phase = LOCAL ? 'playing' : 'waiting'; // 'waiting' | 'ready' | 'playing'
+let myReady = false, oppReady = false;
+let readyTimer = null, readyLeft = 30;
 
 const boardEl = document.getElementById('board');
 const statusEl = document.getElementById('status');
@@ -444,6 +467,7 @@ function resetGame() {
 /* ================== Tương tác bàn cờ ================== */
 function onSquare(r, c) {
   if (gameOver || promoPending) return;
+  if (ONLINE && phase !== 'playing') return;
   if (ONLINE && (!started || S.turn !== myColor)) return;
   const p = S.board[r][c];
   if (selected) {
@@ -492,7 +516,7 @@ promoOverlay.addEventListener('click', () => choosePromo('q'));
 document.getElementById('btnRestart').addEventListener('click', () => {
   resetGame();
   if (ONLINE && conn && conn.open) conn.send({ type: 'restart' });
-  if (ONLINE && started) setStatus(S.turn === myColor ? 'Ván mới! Lượt của bạn — ' + colorName(S.turn) : 'Ván mới! Chờ đối thủ...');
+  if (ONLINE && started) enterReadyPhase();
   if (LOCAL) setStatus('Ván mới! Lượt ' + colorName(S.turn));
 });
 const btnResign = document.getElementById('btnResign');
@@ -500,6 +524,7 @@ if (LOCAL) btnResign.style.display = 'none';
 btnResign.addEventListener('click', () => {
   if (!ONLINE || gameOver) return;
   if (conn && conn.open) conn.send({ type: 'resign' });
+  hideReadyPopup();
   gameOver = true; endReason = 'resign'; resignBy = myColor;
   render(); updateStatus();
 });
@@ -510,6 +535,62 @@ document.getElementById('btnCopy').addEventListener('click', async () => {
   const b = document.getElementById('btnCopy');
   b.textContent = 'Đã chép ✓';
   setTimeout(() => { b.textContent = 'Sao chép link mời'; }, 1800);
+});
+
+/* ================== Giai đoạn sẵn sàng (chỉ online) ================== */
+const readyOverlay = document.getElementById('readyOverlay');
+function renderReady() {
+  document.getElementById('readyMine').textContent = 'Bạn: ' + (myReady ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+  document.getElementById('readyOpp').textContent = 'Đối thủ: ' + (oppReady ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+  const btn = document.getElementById('btnReady');
+  btn.disabled = myReady;
+  btn.textContent = myReady ? 'Đã sẵn sàng — chờ đối thủ…' : '✅ Sẵn sàng';
+  const cnt = document.getElementById('readyCount');
+  const msg = document.getElementById('readyTimeout');
+  if (readyLeft > 0) {
+    cnt.style.display = '';
+    msg.style.display = 'none';
+    cnt.textContent = readyLeft;
+  } else {
+    cnt.style.display = 'none';
+    msg.style.display = '';
+  }
+}
+function stopReadyTimer() {
+  if (readyTimer) { clearInterval(readyTimer); readyTimer = null; }
+}
+function hideReadyPopup() {
+  stopReadyTimer();
+  readyOverlay.classList.remove('open');
+}
+function enterReadyPhase() {
+  if (!ONLINE) { phase = 'playing'; return; }
+  phase = 'ready';
+  myReady = false; oppReady = false;
+  readyLeft = 30;
+  stopReadyTimer();
+  renderReady();
+  readyOverlay.classList.add('open');
+  setStatus('Cả hai người chơi đã vào phòng — hãy bấm "Sẵn sàng" để bắt đầu ván!');
+  readyTimer = setInterval(() => {
+    readyLeft--;
+    if (readyLeft <= 0) { readyLeft = 0; stopReadyTimer(); }
+    renderReady();
+  }, 1000);
+}
+function checkBothReady() {
+  if (phase === 'ready' && myReady && oppReady) {
+    hideReadyPopup();
+    phase = 'playing';
+    updateStatus();
+  }
+}
+document.getElementById('btnReady').addEventListener('click', () => {
+  if (phase !== 'ready' || myReady) return;
+  myReady = true;
+  if (conn && conn.open) conn.send({ type: 'ready' });
+  renderReady();
+  checkBothReady();
 });
 
 /* ================== Mạng PeerJS ================== */
@@ -529,7 +610,13 @@ function onData(d) {
   } else if (d.type === 'restart') {
     resetGame();
     setConn('🟢 Đã kết nối • Đối thủ vừa bắt đầu ván mới • Mã phòng: ' + CODE);
+    if (started) enterReadyPhase();
+  } else if (d.type === 'ready') {
+    oppReady = true;
+    renderReady();
+    checkBothReady();
   } else if (d.type === 'resign') {
+    hideReadyPopup();
     gameOver = true; endReason = 'resign'; resignBy = opp(myColor);
     render(); updateStatus();
   }
@@ -539,11 +626,13 @@ function setupConn() {
   conn.on('open', () => {
     started = true;
     setConn('🟢 Đã kết nối • Mã phòng: ' + CODE + ' • Bạn cầm ' + colorName(myColor).toLowerCase());
-    updateStatus();
+    enterReadyPhase();
   });
   conn.on('data', onData);
   conn.on('close', () => {
     started = false;
+    hideReadyPopup();
+    phase = 'waiting';
     setConn('🔴 Mất kết nối • Mã phòng: ' + CODE);
     setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.');
   });

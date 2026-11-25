@@ -29,6 +29,14 @@
   .cell.last { box-shadow: inset 0 0 0 2px #facc15; }
   .cell.win { background: #14532d; }
   .meta { display: flex; justify-content: space-between; color: #94a3b8; font-size: .95rem; margin-top: 10px; }
+  .overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .78); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .overlay.hidden { display: none; }
+  .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 20px; max-width: 420px; width: 100%; text-align: center; }
+  .modal h2 { margin: 0 0 8px; font-size: 1.3rem; }
+  .countdown { font-size: 3.2rem; font-weight: 800; color: #38bdf8; line-height: 1.15; }
+  .timeout-text { color: #facc15; font-weight: 600; margin: 10px 0 0; }
+  .ready-lines { margin: 16px 0 18px; font-size: 1.05rem; display: grid; gap: 6px; }
+  #btnReady { font-size: 1.05rem; padding: 11px 22px; }
   input[type="text"] { padding: 9px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; text-transform: uppercase; }
   .hidden { display: none; }
   a { color: #38bdf8; }
@@ -83,6 +91,20 @@
   </div>
 </main>
 
+  <!-- Popup đếm ngược: chờ cả hai người chơi sẵn sàng -->
+  <div id="readyOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2>Cả hai người chơi đã vào phòng!</h2>
+      <div id="readyCountdown" class="countdown">30</div>
+      <p id="readyTimeout" class="timeout-text hidden">Hết 30 giây — ván sẽ bắt đầu ngay khi cả hai cùng sẵn sàng.</p>
+      <div class="ready-lines">
+        <div id="myReadyLine">Bạn: Chưa sẵn sàng</div>
+        <div id="oppReadyLine">Đối thủ: Chưa sẵn sàng</div>
+      </div>
+      <button id="btnReady" type="button">✅ Sẵn sàng</button>
+    </div>
+  </div>
+
 <script>
 (function () {
   'use strict';
@@ -105,6 +127,12 @@
   var roomCodeText = document.getElementById('roomCodeText');
   var btnCopy = document.getElementById('btnCopy');
   var setupEl = document.getElementById('setup');
+  var readyOverlay = document.getElementById('readyOverlay');
+  var countdownEl = document.getElementById('readyCountdown');
+  var readyTimeoutEl = document.getElementById('readyTimeout');
+  var myReadyLine = document.getElementById('myReadyLine');
+  var oppReadyLine = document.getElementById('oppReadyLine');
+  var btnReady = document.getElementById('btnReady');
 
   // Trạng thái ván cờ
   var board = [];          // board[y][x]: '' | 'X' | 'O'
@@ -120,9 +148,69 @@
   var connected = false;
   var myMark = null;       // 'X' nếu là chủ phòng, 'O' nếu là khách (chế độ online)
 
+  // Giai đoạn sẵn sàng (chỉ áp dụng online): 'waiting' | 'ready' | 'playing'
+  // Chế độ local luôn ở 'playing'.
+  var phase = isLocal ? 'playing' : 'waiting';
+  var myReady = false;
+  var oppReady = false;
+  var countdownLeft = 30;
+  var countdownTimer = null;
+
   function setStatus(main, sub) {
     statusEl.textContent = main;
     statusSubEl.textContent = sub || '';
+  }
+
+  // ---------- Giai đoạn sẵn sàng (online) ----------
+  function updateReadyUI() {
+    myReadyLine.textContent = 'Bạn: ' + (myReady ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+    oppReadyLine.textContent = 'Đối thủ: ' + (oppReady ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+    btnReady.disabled = myReady;
+    btnReady.textContent = myReady ? 'Đã sẵn sàng — chờ đối thủ…' : '✅ Sẵn sàng';
+  }
+
+  function stopCountdown() {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  function startCountdown() {
+    stopCountdown();
+    countdownEl.textContent = String(countdownLeft);
+    countdownTimer = setInterval(function () {
+      countdownLeft--;
+      if (countdownLeft <= 0) {
+        countdownLeft = 0;
+        stopCountdown();
+        countdownEl.classList.add('hidden');
+        readyTimeoutEl.classList.remove('hidden');
+      }
+      countdownEl.textContent = String(countdownLeft);
+    }, 1000);
+  }
+
+  function enterReadyPhase() {
+    phase = 'ready';
+    myReady = false;
+    oppReady = false;
+    countdownLeft = 30;
+    readyTimeoutEl.classList.add('hidden');
+    countdownEl.classList.remove('hidden');
+    updateReadyUI();
+    readyOverlay.classList.remove('hidden');
+    startCountdown();
+    setStatus('Cả hai người chơi đã vào phòng!', 'Bấm "Sẵn sàng" trong cửa sổ đếm ngược để bắt đầu ván đấu.');
+  }
+
+  function maybeStartPlaying() {
+    if (phase !== 'ready' || !myReady || !oppReady) return;
+    phase = 'playing';
+    stopCountdown();
+    readyOverlay.classList.add('hidden');
+    setStatus('Cả hai đã sẵn sàng! Trận đấu bắt đầu.', '');
+    updateTurnStatus();
   }
 
   function emptyBoard() {
@@ -258,6 +346,7 @@
   }
 
   function onCellClick(x, y) {
+    if (phase !== 'playing') return; // khóa bàn cờ cho tới khi cả hai sẵn sàng
     if (board[y][x] !== '') return;
     if (!myTurnNow()) return;
     if (online) {
@@ -277,7 +366,7 @@
     if (isLocal) {
       updateTurnStatus();
     } else if (online) {
-      if (connected) updateTurnStatus();
+      if (connected) enterReadyPhase(); // ván mới online: quay lại bước sẵn sàng
       else setStatus(isHost ? 'Đang chờ đối thủ vào phòng…' : 'Đang kết nối tới phòng…', '');
     }
   }
@@ -301,13 +390,15 @@
     connected = true;
     btnResign.classList.remove('hidden');
     youAreEl.textContent = 'Bạn là quân ' + myMark + (myMark === 'X' ? ' (đi trước)' : '');
-    setStatus('Đã kết nối! Trận đấu bắt đầu.', '');
-    updateTurnStatus();
+    enterReadyPhase(); // đủ 2 người: hiện popup đếm ngược chờ cả hai sẵn sàng
   }
 
   function onConnectionClosed(msg) {
     connected = false;
     gameOver = true;
+    phase = 'waiting';
+    stopCountdown();
+    readyOverlay.classList.add('hidden');
     setStatus(msg || 'Kết nối đã đóng.', 'Hãy tải lại trang hoặc tạo phòng mới để chơi tiếp.');
   }
 
@@ -317,9 +408,14 @@
       var x = data.x, y = data.y;
       if (typeof x !== 'number' || typeof y !== 'number') return;
       if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
+      if (phase !== 'playing') return; // chưa qua bước sẵn sàng thì chưa nhận nước đi
       if (gameOver || board[y][x] !== '') return;
       if (current !== (myMark === 'X' ? 'O' : 'X')) return;
       placeMark(x, y, current);
+    } else if (data.type === 'ready') {
+      oppReady = true;
+      updateReadyUI();
+      maybeStartPlaying();
     } else if (data.type === 'restart') {
       resetGame();
     } else if (data.type === 'resign') {
@@ -380,6 +476,14 @@
   }
 
   // ---------- Nút bấm ----------
+  btnReady.addEventListener('click', function () {
+    if (phase !== 'ready' || myReady) return;
+    myReady = true;
+    sendMsg({ type: 'ready' });
+    updateReadyUI();
+    maybeStartPlaying();
+  });
+
   btnRestart.addEventListener('click', function () {
     if (online) sendMsg({ type: 'restart' });
     resetGame();
