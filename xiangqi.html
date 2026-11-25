@@ -504,7 +504,7 @@ function loadSave(){
 }
 
 /* ============ Networking (PeerJS) — hello/welcome/sync + khán giả ============ */
-function sendTo(c,msg){ if(c){ try{ c.send(msg); }catch(e){} } }
+function sendTo(c,msg){ if(!c) return; if(c.open){ try{ c.send(msg); }catch(e){} } else if(typeof c.on==='function'){ var sent=false; c.on('open', function(){ if(sent) return; sent=true; try{ c.send(msg); }catch(e){} }); } }
 function sendToSpecs(msg){ for(var k in specConns){ sendTo(specConns[k], msg); } }
 function specKey(c){ return c.connectionId || c.peer; }
 

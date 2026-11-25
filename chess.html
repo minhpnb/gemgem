@@ -675,10 +675,19 @@ function applyGameState(g) {
 function effectivePhase() { return gameOver ? 'over' : (phase === 'playing' ? 'playing' : 'ready'); }
 function hostHasGame() { return gameStarted || restoredPhase === 'playing' || restoredPhase === 'over'; }
 
-function broadcastSpec(msg) {
-  for (const c of spectators) {
-    if (c.open) { try { c.send(msg); } catch (e) {} }
+/* Gửi an toàn: nếu kết nối chưa kịp mở (cờ open chưa bật) thì chờ sự kiện 'open' rồi mới gửi,
+   tránh việc PeerJS âm thầm làm rơi message (race data-trước-open). */
+function sendSafe(c, msg) {
+  if (!c) return;
+  if (c.open) { try { c.send(msg); } catch (e) {} }
+  else if (typeof c.on === 'function') {
+    let sent = false;
+    c.on('open', () => { if (sent) return; sent = true; try { c.send(msg); } catch (e) {} });
   }
+}
+
+function broadcastSpec(msg) {
+  for (const c of spectators) sendSafe(c, msg);
 }
 
 function sendMove(m) {
@@ -866,10 +875,10 @@ function wireHostConn(c) {
         playerConn = c; conn = c; playerGone = false; started = true;
         setConn('🟢 Đã kết nối • Mã phòng: ' + CODE + ' • Bạn cầm quân trắng');
         const resume = hostHasGame();
-        c.send({ type: 'welcome', as: 'player', resume: resume });
+        sendSafe(c, { type: 'welcome', as: 'player', resume: resume });
         if (resume) {
           gameStarted = true;
-          c.send({ type: 'sync', state: serializeGame(), phase: effectivePhase(), hostReady: myReady });
+          sendSafe(c, { type: 'sync', state: serializeGame(), phase: effectivePhase(), hostReady: myReady });
           if (effectivePhase() === 'ready') {
             const keepMine = myReady;
             enterReadyPhase();
@@ -887,8 +896,8 @@ function wireHostConn(c) {
       } else {
         role = 'spectator';
         spectators.add(c);
-        c.send({ type: 'welcome', as: 'spectator' });
-        c.send({ type: 'sync', state: serializeGame(), phase: effectivePhase(), hostReady: myReady });
+        sendSafe(c, { type: 'welcome', as: 'spectator' });
+        sendSafe(c, { type: 'sync', state: serializeGame(), phase: effectivePhase(), hostReady: myReady });
       }
       return;
     }

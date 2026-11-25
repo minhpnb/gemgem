@@ -424,8 +424,19 @@
   }
 
   function sendTo(c, obj) {
-    if (c && c.open) {
+    if (!c) return;
+    if (c.open) {
       try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+    } else if (typeof c.on === 'function') {
+      // Phía nhận có thể nhận 'data' (hello) trước khi kết nối kịp bật cờ open.
+      // Nếu bỏ qua ở đây, tin bắt tay (welcome/sync) sẽ mất lặng lẽ và khách kẹt
+      // ở "Đang kết nối…" mãi mãi — nên hoãn gửi cho tới sự kiện 'open'.
+      var sent = false;
+      c.on('open', function () {
+        if (sent) return;
+        sent = true;
+        try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+      });
     }
   }
 
