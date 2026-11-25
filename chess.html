@@ -22,8 +22,8 @@
   #inviteBox .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
   #inviteBox input { flex: 1 1 260px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; padding: 9px 10px; font-size: .9rem; }
   main.game { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 18px; align-items: flex-start; }
-  #board { display: grid; grid-template-columns: repeat(8, 1fr); width: min(92vw, 560px); aspect-ratio: 1; border: 2px solid #334155; border-radius: 8px; overflow: hidden; user-select: none; touch-action: manipulation; }
-  .sq { position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  #board { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); width: min(92vw, 560px); aspect-ratio: 1; container-type: inline-size; border: 2px solid #334155; border-radius: 8px; overflow: hidden; user-select: none; touch-action: manipulation; }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; aspect-ratio: 1; min-width: 0; min-height: 0; overflow: hidden; }
   .sq.light { background: #f0d9b5; }
   .sq.dark { background: #b58863; }
   .sq.last { background-image: linear-gradient(rgba(250, 204, 21, .45), rgba(250, 204, 21, .45)); }
@@ -31,9 +31,9 @@
   .sq.check { background-image: radial-gradient(circle, rgba(239, 68, 68, .9) 20%, rgba(239, 68, 68, .35) 75%); }
   .sq.dest::after { content: ""; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: rgba(15, 23, 42, .28); pointer-events: none; }
   .sq.capture::after { content: ""; position: absolute; inset: 4%; border-radius: 50%; border: calc(min(92vw, 560px) / 90) solid rgba(15, 23, 42, .35); pointer-events: none; }
-  .pc { font-size: clamp(26px, 8.5vw, 46px); line-height: 1; pointer-events: none; }
-  .pc.pw { color: #f8fafc; text-shadow: 0 0 3px #000, 0 2px 3px rgba(0,0,0,.65); }
-  .pc.pb { color: #0b1220; text-shadow: 0 0 3px rgba(255,255,255,.4), 0 2px 3px rgba(0,0,0,.4); }
+  .pc { font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "DejaVu Sans", sans-serif; font-size: clamp(26px, 8.5vw, 46px); font-size: 9.6cqw; line-height: 1; pointer-events: none; }
+  .pc.pw { color: #ffffff; text-shadow: -1.5px 0 0 #374151, 1.5px 0 0 #374151, 0 -1.5px 0 #374151, 0 1.5px 0 #374151, -1.5px -1.5px 0 #374151, 1.5px -1.5px 0 #374151, -1.5px 1.5px 0 #374151, 1.5px 1.5px 0 #374151, 0 3px 4px rgba(0,0,0,.5); }
+  .pc.pb { color: #111827; text-shadow: -1px 0 0 rgba(255,255,255,.5), 1px 0 0 rgba(255,255,255,.5), 0 -1px 0 rgba(255,255,255,.5), 0 1px 0 rgba(255,255,255,.5), 0 3px 4px rgba(0,0,0,.45); }
   .coord { position: absolute; font-size: 10px; font-weight: 700; pointer-events: none; opacity: .75; color: #0f172a; }
   .coord.rank { top: 2px; left: 3px; }
   .coord.file { bottom: 2px; right: 3px; }
