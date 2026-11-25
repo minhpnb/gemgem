@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cờ Caro — DuoGames</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.5; }
+  main { max-width: 680px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: #94a3b8; margin: 0 0 16px; }
+  .panel { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  #status { font-weight: 600; }
+  #status.small { font-weight: 400; color: #94a3b8; font-size: .95rem; }
+  .roomcode { font-size: 1.3rem; font-weight: 700; letter-spacing: 2px; color: #38bdf8; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  button, .btn { display: inline-block; padding: 9px 14px; background: #38bdf8; color: #082f49; border: none; border-radius: 8px; font-weight: 600; font-size: .95rem; cursor: pointer; text-decoration: none; }
+  button.secondary, .btn.secondary { background: #334155; color: #e2e8f0; }
+  button.danger { background: #7f1d1d; color: #fecaca; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #boardWrap { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 10px; }
+  #board { display: grid; grid-template-columns: repeat(15, 1fr); gap: 2px; width: 100%; max-width: 600px; aspect-ratio: 1; margin: 0 auto; touch-action: manipulation; }
+  .cell { background: #0f172a; border: 1px solid #334155; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-weight: 800; cursor: pointer; padding: 0; aspect-ratio: 1; font-size: clamp(10px, 3.4vw, 22px); line-height: 1; user-select: none; -webkit-user-select: none; }
+  .cell:hover { border-color: #38bdf8; }
+  .cell.x { color: #f87171; }
+  .cell.o { color: #38bdf8; }
+  .cell.last { box-shadow: inset 0 0 0 2px #facc15; }
+  .cell.win { background: #14532d; }
+  .meta { display: flex; justify-content: space-between; color: #94a3b8; font-size: .95rem; margin-top: 10px; }
+  input[type="text"] { padding: 9px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; text-transform: uppercase; }
+  .hidden { display: none; }
+  a { color: #38bdf8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔲 Cờ Caro</h1>
+  <p class="sub">Luật Việt Nam: đúng 5 quân liên tiếp mới thắng, bị chặn 2 đầu hoặc quá 5 quân (dài hơn 5) thì không thắng.</p>
+
+  <!-- Màn hình thiết lập khi mở trực tiếp không có tham số -->
+  <div id="setup" class="panel hidden">
+    <p><strong>Chơi online 2 người:</strong> tạo phòng để nhận mã phòng và link mời, hoặc nhập mã phòng của bạn bè để tham gia.</p>
+    <div class="toolbar">
+      <button id="btnCreate" type="button">Tạo phòng mới</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="joinCode" placeholder="Nhập mã phòng, ví dụ CAB12C" maxlength="8" size="18">
+      <button id="btnJoin" type="button" class="secondary">Vào phòng</button>
+    </div>
+    <div class="toolbar">
+      <a class="btn secondary" href="caro.html?local=1">Chơi 2 người trên cùng máy</a>
+      <a class="btn secondary" href="index.html">Về trang chủ</a>
+    </div>
+  </div>
+
+  <!-- Thông tin phòng / chờ đối thủ -->
+  <div id="roomInfo" class="panel hidden">
+    <div>Mã phòng: <span class="roomcode" id="roomCodeText"></span></div>
+    <p id="shareText" style="margin:8px 0;">Gửi link mời này cho đối thủ:</p>
+    <div class="toolbar">
+      <button id="btnCopy" type="button">Sao chép link mời</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="status">Đang khởi tạo…</div>
+    <div id="statusSub" class="small"></div>
+    <div class="toolbar">
+      <button id="btnRestart" type="button" class="secondary">Ván mới</button>
+      <button id="btnResign" type="button" class="danger hidden">Xin thua</button>
+      <a class="btn secondary" href="index.html">Về trang chủ</a>
+    </div>
+  </div>
+
+  <div id="boardWrap">
+    <div id="board"></div>
+    <div class="meta">
+      <span id="moveCount">Số nước đi: 0</span>
+      <span id="youAre"></span>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var SIZE = 15;
+  var params = new URLSearchParams(location.search);
+  var roomCode = (params.get('room') || '').toUpperCase();
+  var isHost = params.get('host') === '1';
+  var isLocal = params.get('local') === '1';
+  var online = !isLocal && !!roomCode;
+
+  var boardEl = document.getElementById('board');
+  var statusEl = document.getElementById('status');
+  var statusSubEl = document.getElementById('statusSub');
+  var moveCountEl = document.getElementById('moveCount');
+  var youAreEl = document.getElementById('youAre');
+  var btnRestart = document.getElementById('btnRestart');
+  var btnResign = document.getElementById('btnResign');
+  var roomInfoEl = document.getElementById('roomInfo');
+  var roomCodeText = document.getElementById('roomCodeText');
+  var btnCopy = document.getElementById('btnCopy');
+  var setupEl = document.getElementById('setup');
+
+  // Trạng thái ván cờ
+  var board = [];          // board[y][x]: '' | 'X' | 'O'
+  var cells = [];          // cells[y][x]: phần tử DOM
+  var current = 'X';       // lượt hiện tại
+  var gameOver = false;
+  var moveCount = 0;
+  var lastMove = null;     // {x, y}
+
+  // Trạng thái mạng
+  var peer = null;
+  var conn = null;
+  var connected = false;
+  var myMark = null;       // 'X' nếu là chủ phòng, 'O' nếu là khách (chế độ online)
+
+  function setStatus(main, sub) {
+    statusEl.textContent = main;
+    statusSubEl.textContent = sub || '';
+  }
+
+  function emptyBoard() {
+    board = [];
+    for (var y = 0; y < SIZE; y++) {
+      var row = [];
+      for (var x = 0; x < SIZE; x++) row.push('');
+      board.push(row);
+    }
+  }
+
+  function buildBoard() {
+    boardEl.innerHTML = '';
+    cells = [];
+    for (var y = 0; y < SIZE; y++) {
+      var rowCells = [];
+      for (var x = 0; x < SIZE; x++) {
+        (function (cx, cy) {
+          var c = document.createElement('button');
+          c.type = 'button';
+          c.className = 'cell';
+          c.setAttribute('aria-label', 'Ô ' + (cx + 1) + ',' + (cy + 1));
+          c.addEventListener('click', function () { onCellClick(cx, cy); });
+          boardEl.appendChild(c);
+          rowCells.push(c);
+        })(x, y);
+      }
+      cells.push(rowCells);
+    }
+  }
+
+  function render() {
+    for (var y = 0; y < SIZE; y++) {
+      for (var x = 0; x < SIZE; x++) {
+        var c = cells[y][x];
+        var v = board[y][x];
+        c.textContent = v;
+        c.classList.toggle('x', v === 'X');
+        c.classList.toggle('o', v === 'O');
+        c.classList.toggle('last', !!lastMove && lastMove.x === x && lastMove.y === y);
+      }
+    }
+    moveCountEl.textContent = 'Số nước đi: ' + moveCount;
+  }
+
+  function clearWinHighlight() {
+    for (var y = 0; y < SIZE; y++)
+      for (var x = 0; x < SIZE; x++)
+        cells[y][x].classList.remove('win');
+  }
+
+  // Kiểm tra thắng theo luật caro Việt Nam:
+  // - Đúng 5 quân liên tiếp (quá 5 không thắng)
+  // - Không bị đối thủ chặn cả 2 đầu (mép bàn không tính là chặn)
+  // Trả về mảng 5 ô thắng hoặc null.
+  function checkWin(x, y, mark) {
+    var dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    var opp = mark === 'X' ? 'O' : 'X';
+    for (var d = 0; d < dirs.length; d++) {
+      var dx = dirs[d][0], dy = dirs[d][1];
+      // Tìm đầu mút của dãy theo chiều âm
+      var sx = x, sy = y;
+      while (true) {
+        var nx = sx - dx, ny = sy - dy;
+        if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) break;
+        if (board[ny][nx] !== mark) break;
+        sx = nx; sy = ny;
+      }
+      // Thu thập dãy liên tiếp từ đầu mút
+      var run = [];
+      var cx = sx, cy = sy;
+      while (cx >= 0 && cy >= 0 && cx < SIZE && cy < SIZE && board[cy][cx] === mark) {
+        run.push({ x: cx, y: cy });
+        cx += dx; cy += dy;
+      }
+      if (run.length !== 5) continue; // quá 5 hoặc chưa đủ 5 đều không thắng
+      // Ô ngay sau đầu mút cuối cùng là (cx, cy); ô ngay trước đầu mút đầu tiên:
+      var bx = sx - dx, by = sy - dy;
+      var blockedStart = bx >= 0 && by >= 0 && bx < SIZE && by < SIZE && board[by][bx] === opp;
+      var blockedEnd = cx >= 0 && cy >= 0 && cx < SIZE && cy < SIZE && board[cy][cx] === opp;
+      if (blockedStart && blockedEnd) continue; // bị chặn 2 đầu: không thắng
+      return run;
+    }
+    return null;
+  }
+
+  function updateTurnStatus() {
+    if (gameOver) return;
+    if (isLocal) {
+      setStatus('Lượt của ' + current + (current === 'X' ? ' (đi trước)' : ''), 'Chế độ 2 người trên cùng máy — hai người thay phiên nhau đánh.');
+    } else if (online) {
+      if (!connected) return; // trạng thái kết nối đang được hiển thị
+      if (current === myMark) {
+        setStatus('Lượt của bạn (' + myMark + ')', 'Hãy chọn một ô trống trên bàn cờ.');
+      } else {
+        setStatus('Chờ đối thủ…', 'Đối thủ đang nghĩ nước đi.');
+      }
+    }
+  }
+
+  function placeMark(x, y, mark) {
+    board[y][x] = mark;
+    moveCount++;
+    lastMove = { x: x, y: y };
+    var win = checkWin(x, y, mark);
+    render();
+    if (win) {
+      gameOver = true;
+      win.forEach(function (p) { cells[p.y][p.x].classList.add('win'); });
+      if (isLocal) {
+        setStatus('🎉 ' + mark + ' thắng!', 'Bấm "Ván mới" để chơi lại.');
+      } else if (mark === myMark) {
+        setStatus('🎉 Bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
+      } else {
+        setStatus('Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
+      }
+      return;
+    }
+    if (moveCount >= SIZE * SIZE) {
+      gameOver = true;
+      setStatus('Hòa! Bàn cờ đã đầy.', 'Bấm "Ván mới" để chơi lại.');
+      return;
+    }
+    current = mark === 'X' ? 'O' : 'X';
+    updateTurnStatus();
+  }
+
+  function myTurnNow() {
+    if (gameOver) return false;
+    if (isLocal) return true;
+    if (!online || !connected) return false;
+    return current === myMark;
+  }
+
+  function onCellClick(x, y) {
+    if (board[y][x] !== '') return;
+    if (!myTurnNow()) return;
+    if (online) {
+      sendMsg({ type: 'move', x: x, y: y });
+    }
+    placeMark(x, y, current);
+  }
+
+  function resetGame() {
+    emptyBoard();
+    current = 'X';
+    gameOver = false;
+    moveCount = 0;
+    lastMove = null;
+    buildBoard();
+    render();
+    if (isLocal) {
+      updateTurnStatus();
+    } else if (online) {
+      if (connected) updateTurnStatus();
+      else setStatus(isHost ? 'Đang chờ đối thủ vào phòng…' : 'Đang kết nối tới phòng…', '');
+    }
+  }
+
+  // ---------- Mạng (PeerJS) ----------
+  function sendMsg(obj) {
+    if (conn && connected) {
+      try { conn.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+    }
+  }
+
+  function shareLink() {
+    var url = new URL(location.href);
+    url.searchParams.set('room', roomCode);
+    url.searchParams.delete('host');
+    url.searchParams.delete('local');
+    return url.toString();
+  }
+
+  function onConnectionOpen() {
+    connected = true;
+    btnResign.classList.remove('hidden');
+    youAreEl.textContent = 'Bạn là quân ' + myMark + (myMark === 'X' ? ' (đi trước)' : '');
+    setStatus('Đã kết nối! Trận đấu bắt đầu.', '');
+    updateTurnStatus();
+  }
+
+  function onConnectionClosed(msg) {
+    connected = false;
+    gameOver = true;
+    setStatus(msg || 'Kết nối đã đóng.', 'Hãy tải lại trang hoặc tạo phòng mới để chơi tiếp.');
+  }
+
+  function handleData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'move') {
+      var x = data.x, y = data.y;
+      if (typeof x !== 'number' || typeof y !== 'number') return;
+      if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
+      if (gameOver || board[y][x] !== '') return;
+      if (current !== (myMark === 'X' ? 'O' : 'X')) return;
+      placeMark(x, y, current);
+    } else if (data.type === 'restart') {
+      resetGame();
+    } else if (data.type === 'resign') {
+      gameOver = true;
+      setStatus('🎉 Đối thủ đã xin thua — bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
+    }
+  }
+
+  function wireConnection(c) {
+    conn = c;
+    conn.on('open', onConnectionOpen);
+    conn.on('data', handleData);
+    conn.on('close', function () { onConnectionClosed('Đối thủ đã rời phòng. Kết nối đã đóng.'); });
+    conn.on('error', function () { onConnectionClosed('Kết nối gặp lỗi. Vui lòng thử lại.'); });
+  }
+
+  function startOnline() {
+    roomInfoEl.classList.remove('hidden');
+    roomCodeText.textContent = roomCode;
+    if (typeof Peer === 'undefined') {
+      setStatus('Không tải được thư viện kết nối (PeerJS).', 'Kiểm tra mạng rồi tải lại trang.');
+      return;
+    }
+    if (isHost) {
+      myMark = 'X';
+      document.getElementById('shareText').textContent = 'Gửi link mời này cho đối thủ để họ vào phòng:';
+      setStatus('Đang chờ đối thủ vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Bạn là quân X và đi trước.');
+      peer = new Peer('duogames-' + roomCode);
+      peer.on('open', function () {
+        setStatus('Đang chờ đối thủ vào phòng…', 'Phòng đã sẵn sàng. Bạn là quân X và đi trước.');
+      });
+      peer.on('connection', function (c) { wireConnection(c); });
+      peer.on('error', function (err) {
+        if (err && err.type === 'unavailable-id') {
+          setStatus('Mã phòng này đang được dùng.', 'Hãy tạo phòng khác với mã mới.');
+        } else {
+          setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+        }
+      });
+    } else {
+      myMark = 'O';
+      document.getElementById('shareText').textContent = 'Bạn đang vào phòng với tư cách khách (quân O).';
+      btnCopy.classList.add('hidden');
+      setStatus('Đang kết nối tới phòng…', 'Vui lòng chờ chủ phòng sẵn sàng.');
+      peer = new Peer();
+      peer.on('open', function () {
+        var c = peer.connect('duogames-' + roomCode, { reliable: true });
+        wireConnection(c);
+      });
+      peer.on('error', function (err) {
+        if (err && err.type === 'peer-unavailable') {
+          onConnectionClosed('Không tìm thấy phòng ' + roomCode + '. Có thể chủ phòng chưa tạo phòng hoặc mã phòng chưa đúng.');
+        } else {
+          setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+        }
+      });
+    }
+  }
+
+  // ---------- Nút bấm ----------
+  btnRestart.addEventListener('click', function () {
+    if (online) sendMsg({ type: 'restart' });
+    resetGame();
+  });
+
+  btnResign.addEventListener('click', function () {
+    if (!online || gameOver) return;
+    sendMsg({ type: 'resign' });
+    gameOver = true;
+    setStatus('Bạn đã xin thua. Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
+  });
+
+  btnCopy.addEventListener('click', function () {
+    var link = shareLink();
+    function done() {
+      btnCopy.textContent = 'Đã sao chép ✓';
+      setTimeout(function () { btnCopy.textContent = 'Sao chép link mời'; }, 2000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(done, function () { window.prompt('Sao chép link mời:', link); });
+    } else {
+      window.prompt('Sao chép link mời:', link);
+    }
+  });
+
+  var btnCreate = document.getElementById('btnCreate');
+  if (btnCreate) {
+    btnCreate.addEventListener('click', function () {
+      var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      var code = 'C';
+      for (var i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+      location.href = 'caro.html?room=' + code + '&host=1';
+    });
+  }
+  var btnJoin = document.getElementById('btnJoin');
+  if (btnJoin) {
+    btnJoin.addEventListener('click', function () {
+      var code = document.getElementById('joinCode').value.trim().toUpperCase();
+      if (code) location.href = 'caro.html?room=' + encodeURIComponent(code);
+    });
+  }
+
+  // ---------- Khởi tạo ----------
+  emptyBoard();
+  buildBoard();
+  render();
+
+  if (isLocal) {
+    youAreEl.textContent = 'Chế độ cùng máy: X và O thay phiên';
+    setStatus('Lượt của X (đi trước)', 'Chế độ 2 người trên cùng máy — hai người thay phiên nhau đánh.');
+  } else if (online) {
+    startOnline();
+  } else {
+    setupEl.classList.remove('hidden');
+    setStatus('Chọn cách chơi bên trên để bắt đầu.', '');
+  }
+})();
+</script>
+</body>
+</html>
