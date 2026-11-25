@@ -228,8 +228,13 @@ var flipped = false;               /* guest (Black) sees board flipped */
 var myColor = localMode ? null : (isHost ? 'r' : 'b');
 var board, turn, selected, selMoves, lastMove, gameOver, started;
 var peer=null, conn=null, connected=false;
-var phase = localMode ? 'playing' : 'waiting'; /* 'waiting' | 'ready' | 'playing' */
+var phase = localMode ? 'playing' : 'waiting'; /* 'waiting' | 'ready' | 'playing' | 'over' */
 var myReady=false, oppReady=false, readyTimer=null, countLeft=30;
+var overInfo=null;                 /* {winner, reason} khi gameOver */
+var playerConn=null, playerGone=false, specConns={};
+var isSpectator=false, everWelcomed=false, restoredSave=null;
+var connOpened=false, guestAttempts=0, guestMaxAttempts=40, guestRetryTimer=null, connectSeq=0, hostRegAttempts=0;
+var SAVE_KEY='duo-save-'+roomCode;
 
 var statusEl=document.getElementById('status'),
     roomInfoEl=document.getElementById('roomInfo'),
@@ -246,24 +251,38 @@ var statusEl=document.getElementById('status'),
     readyBtn=document.getElementById('readyBtn');
 
 function resetGame(){
-  board=initialBoard(); turn='r'; selected=null; selMoves=[]; lastMove=null; gameOver=false;
+  board=initialBoard(); turn='r'; selected=null; selMoves=[]; lastMove=null; gameOver=false; overInfo=null;
   started = localMode ? true : connected;
   render(); updateStatus();
+  saveGame();
 }
 function setStatus(msg){ statusEl.textContent=msg; }
 function updateStatus(extra){
   if(extra){ setStatus(extra); return; }
+  if(isSpectator){
+    if(gameOver && overInfo){ setStatus('👁 Ván đấu đã kết thúc — ' + resultText()); return; }
+    if(phase!=='playing'){ setStatus('👁 Bạn đang xem — đang chờ ván bắt đầu…'); return; }
+    setStatus('👁 Bạn đang xem ván này — ' + (turn==='r' ? 'Lượt quân Đỏ' : 'Lượt quân Đen'));
+    return;
+  }
   if(gameOver) return; /* winner message already set */
   if(!localMode && !connected){ setStatus(isHost ? 'Đang chờ đối thủ vào phòng…' : 'Đang kết nối tới phòng…'); return; }
   if(localMode){ setStatus(turn==='r' ? 'Lượt quân Đỏ' : 'Lượt quân Đen'); return; }
   setStatus(turn===myColor ? 'Lượt của bạn' : 'Chờ đối thủ…');
 }
+function resultText(){
+  if(!overInfo) return '';
+  var name = overInfo.winner==='r' ? 'Quân Đỏ' : 'Quân Đen';
+  return '🏆 ' + name + ' thắng!' + (overInfo.reason ? ' (' + overInfo.reason + ')' : '');
+}
 function endGame(winnerColor, reason){
   if(!localMode) hideReadyPopup();
   gameOver=true; selected=null; selMoves=[];
-  var name = winnerColor==='r' ? 'Quân Đỏ' : 'Quân Đen';
-  setStatus('🏆 ' + name + ' thắng!' + (reason ? ' (' + reason + ')' : ''));
+  overInfo={ winner:winnerColor, reason:reason||'' };
+  if(isSpectator) setStatus('👁 Ván đấu đã kết thúc — ' + resultText());
+  else setStatus(resultText());
   render();
+  saveGame();
 }
 function afterMove(){
   render();
@@ -273,6 +292,7 @@ function afterMove(){
     return;
   }
   if(isInCheck(board,turn)){
+    if(isSpectator){ setStatus('👁 Bạn đang xem — ' + (turn==='r'?'Quân Đỏ':'Quân Đen') + ' đang bị chiếu!'); render(); return; }
     updateStatus((localMode ? (turn==='r'?'Quân Đỏ':'Quân Đen') : (turn===myColor?'Bạn':'Đối thủ')) + ' đang bị chiếu!');
     render();
     return;
@@ -285,12 +305,14 @@ function applyMove(fx,fy,tx,ty){
   selected=null; selMoves=[];
   turn = turn==='r' ? 'b':'r';
   afterMove();
+  saveGame();
 }
 function tryMove(fx,fy,tx,ty){
   var ok = selMoves.some(function(m){ return m[0]===tx&&m[1]===ty; });
   if(!ok) return false;
   applyMove(fx,fy,tx,ty);
   if(!localMode && conn && connected){ try{ conn.send({type:'move',fx:fx,fy:fy,tx:tx,ty:ty}); }catch(e){} }
+  if(!localMode && isHost) sendToSpecs({type:'move',fx:fx,fy:fy,tx:tx,ty:ty});
   return true;
 }
 function dispPos(x,y){ /* board coords → % position on screen */
@@ -334,6 +356,7 @@ function render(){
 function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
 boardEl.addEventListener('click', function(ev){
+  if(isSpectator) return;
   if(gameOver || !started) return;
   if(!localMode && phase!=='playing') return;
   if(!localMode && (!connected || turn!==myColor)) return;
@@ -354,18 +377,21 @@ boardEl.addEventListener('click', function(ev){
 });
 
 document.getElementById('restartBtn').addEventListener('click', function(){
+  if(isSpectator) return;
   resetGame();
   if(!localMode && conn && connected){
     try{ conn.send({type:'restart'}); }catch(e){}
+    if(isHost) sendToSpecs({type:'restart'});
     enterReadyPhase();
     return;
   }
   if(localMode) updateStatus('Ván mới — lượt quân Đỏ');
 });
 resignBtn.addEventListener('click', function(){
-  if(localMode || gameOver || !connected) return;
+  if(localMode || isSpectator || gameOver || !connected) return;
   if(!confirm('Bạn chắc chắn muốn xin thua ván này?')) return;
   try{ conn.send({type:'resign'}); }catch(e){}
+  if(isHost) sendToSpecs({type:'resign'});
   endGame(myColor==='r'?'b':'r', 'đối thủ xin thua');
 });
 copyBtn.addEventListener('click', function(){
@@ -408,12 +434,16 @@ function enterReadyPhase(){
     }
   },1000);
   setStatus('Cả hai đã vào phòng! Hãy bấm "Sẵn sàng" để bắt đầu ván.');
+  saveGame();
 }
 function maybeStartGame(){
   if(phase==='ready' && myReady && oppReady){
     hideReadyPopup();
     phase='playing';
+    started=true;
     updateStatus();
+    saveGame();
+    if(isHost) sendToSpecs({type:'start'});
   }
 }
 readyBtn.addEventListener('click', function(){
@@ -424,38 +454,245 @@ readyBtn.addEventListener('click', function(){
   maybeStartGame();
 });
 
-/* ============ Networking (PeerJS) ============ */
-function onConnOpen(){
-  connected=true; started=true;
-  resetGame();
-  enterReadyPhase();
+/* ============ Lưu tiến trình (localStorage, giữ 15 phút) ============ */
+function serializeGame(){
+  return {
+    board: board.map(function(row){ return row.map(function(p){ return p ? {t:p.t,c:p.c} : null; }); }),
+    turn: turn,
+    lastMove: lastMove,
+    gameOver: gameOver,
+    over: overInfo
+  };
+}
+function applyGameState(g){
+  if(!g || !g.board) return;
+  board = g.board.map(function(row){ return row.map(function(p){ return p ? {t:p.t,c:p.c} : null; }); });
+  turn = g.turn==='b' ? 'b' : 'r';
+  lastMove = g.lastMove || null;
+  gameOver = !!g.gameOver;
+  overInfo = g.over || null;
+  selected=null; selMoves=[];
+  render();
+  if(gameOver && overInfo) setStatus(isSpectator ? '👁 Ván đấu đã kết thúc — ' + resultText() : resultText());
+  else updateStatus();
+}
+function currentPhase(){ return gameOver ? 'over' : (phase==='playing' ? 'playing' : 'ready'); }
+function saveGame(){
+  if(localMode || isSpectator || !roomCode) return;
+  try{
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      role: isHost ? 'host' : 'guest',
+      phase: currentPhase(),
+      game: serializeGame()
+    }));
+  }catch(e){}
+}
+function loadSave(){
+  if(localMode || !roomCode) return null;
+  try{
+    var raw=localStorage.getItem(SAVE_KEY);
+    if(!raw) return null;
+    var s=JSON.parse(raw);
+    if(!s || !s.game || !s.savedAt || (Date.now()-s.savedAt) >= 15*60*1000){
+      localStorage.removeItem(SAVE_KEY);
+      return null;
+    }
+    if(s.role !== (isHost ? 'host' : 'guest')) return null;
+    return s;
+  }catch(e){ return null; }
+}
+
+/* ============ Networking (PeerJS) — hello/welcome/sync + khán giả ============ */
+function sendTo(c,msg){ if(c){ try{ c.send(msg); }catch(e){} } }
+function sendToSpecs(msg){ for(var k in specConns){ sendTo(specConns[k], msg); } }
+function specKey(c){ return c.connectionId || c.peer; }
+
+function becomeSpectator(){
+  isSpectator=true; connected=true; myColor=null; flipped=false;
+  try{ localStorage.removeItem(SAVE_KEY); }catch(e){} /* khán giả không lưu ván */
+  guestMaxAttempts=10;
+  modeLine.textContent='Chế độ xem — ván này đã đủ 2 người chơi';
+  document.getElementById('restartBtn').style.display='none';
+  resignBtn.style.display='none';
+  hideReadyPopup();
+  setStatus('👁 Bạn đang xem ván này');
+  render();
+}
+function applySync(data){
+  if(!data || !data.state) return;
+  applyGameState(data.state);
+  hideReadyPopup();
+  connected=true;
+  if(data.phase==='over'){ phase='over'; }
+  else if(data.phase==='playing'){ phase='playing'; started=true; }
+  else { phase='ready'; }
+  if(isSpectator){ updateStatus(); }
+  else if(data.phase==='playing'){ setStatus('Đã khôi phục ván đấu — tiếp tục chơi'); }
+  saveGame();
 }
 function onData(data){
   if(!data || typeof data!=='object') return;
-  if(data.type==='move'){
+  if(data.type==='welcome'){
+    everWelcomed=true;
+    if(data.as==='spectator'){ becomeSpectator(); }
+    else {
+      if(isSpectator){ /* được nhận làm người chơi (người chơi cũ đã rời bàn) */
+        isSpectator=false; myColor='b'; flipped=true;
+        document.getElementById('restartBtn').style.display='';
+        resignBtn.style.display='';
+        modeLine.textContent='Chế độ online — bạn là khách (quân Đen)';
+      }
+      connected=true; started=true;
+      resetGame();
+      enterReadyPhase();
+    }
+  } else if(data.type==='sync'){
+    applySync(data);
+  } else if(data.type==='start'){
+    if(isSpectator){ phase='playing'; updateStatus(); }
+  } else if(data.type==='move'){
     var fx=+data.fx, fy=+data.fy, tx=+data.tx, ty=+data.ty;
     if([fx,fy,tx,ty].some(isNaN)) return;
-    if(board[fy] && board[fy][fx]) applyMove(fx,fy,tx,ty);
+    if(board[fy] && board[fy][fx]){
+      applyMove(fx,fy,tx,ty);
+      if(isHost && !isSpectator) sendToSpecs({type:'move',fx:fx,fy:fy,tx:tx,ty:ty});
+    }
   } else if(data.type==='ready'){
+    if(isSpectator) return;
     oppReady=true;
     updateReadyUI();
     maybeStartGame();
   } else if(data.type==='restart'){
+    if(isSpectator){
+      resetGame();
+      phase='ready';
+      setStatus('👁 Bạn đang xem — ván mới đang chờ hai người chơi sẵn sàng…');
+      return;
+    }
     resetGame();
     if(connected) enterReadyPhase();
+    if(isHost) sendToSpecs({type:'restart'});
   } else if(data.type==='resign'){
+    if(isSpectator){
+      gameOver=true; phase='over'; selected=null; selMoves=[];
+      setStatus('👁 Ván đấu đã kết thúc — có người chơi đã xin thua.');
+      render();
+      return;
+    }
     endGame(myColor, 'đối thủ xin thua');
+    if(isHost) sendToSpecs({type:'resign'});
   }
 }
-function onConnGone(){
-  if(connected){ connected=false; hideReadyPopup(); phase='waiting'; setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.'); }
+
+/* --- Phía chủ phòng: phân vai người chơi / khán giả --- */
+function onPlayerGone(){
+  playerConn=null; conn=null; playerGone=true; connected=false;
+  hideReadyPopup();
+  if(!gameOver && phase!=='playing') phase='waiting';
+  setStatus('Đối thủ mất kết nối — tiến trình đã lưu, chờ đối thủ quay lại trong 15 phút…');
+  saveGame();
 }
-function setupConn(c){
-  conn=c;
-  conn.on('open', onConnOpen);
-  conn.on('data', onData);
-  conn.on('close', onConnGone);
-  conn.on('error', function(){ setStatus('⚠️ Lỗi kết nối với đối thủ.'); });
+function hostAssignRole(c){
+  if(!playerConn || playerGone){
+    playerConn=c; conn=c; playerGone=false; connected=true; started=true;
+    sendTo(c,{type:'welcome', as:'player'});
+    if(phase==='playing' || gameOver){
+      phase = gameOver ? 'over' : 'playing';
+      hideReadyPopup();
+      sendTo(c,{type:'sync', state:serializeGame(), phase:currentPhase()});
+      if(gameOver && overInfo) setStatus(resultText());
+      else updateStatus();
+      saveGame();
+    } else {
+      resetGame();
+      enterReadyPhase();
+    }
+    return 'player';
+  }
+  specConns[specKey(c)]=c;
+  sendTo(c,{type:'welcome', as:'spectator'});
+  sendTo(c,{type:'sync', state:serializeGame(), phase:currentPhase()});
+  return 'spectator';
+}
+function setupIncoming(c){
+  var role=null;
+  c.on('data', function(data){
+    if(!data || typeof data!=='object') return;
+    if(data.type==='hello' && !role){ role=hostAssignRole(c); return; }
+    if(role==='player') onData(data);
+    /* khán giả: bỏ qua mọi dữ liệu gửi lên */
+  });
+  c.on('close', function(){
+    if(role==='player' && playerConn===c){ onPlayerGone(); }
+    else if(role==='spectator'){ delete specConns[specKey(c)]; }
+  });
+  c.on('error', function(){});
+}
+function registerHost(){
+  peer=new Peer('duogames-'+roomCode);
+  peer.on('open', function(){
+    hostRegAttempts=0;
+    if(gameOver && overInfo){ setStatus(resultText()); }
+    else if(restoredSave && phase==='playing'){ setStatus('Đã khôi phục ván — chờ đối thủ quay lại…'); }
+    else setStatus('Phòng đã sẵn sàng! Gửi mã phòng hoặc link mời cho đối thủ.');
+    roomInfoEl.innerHTML='Mã phòng: <b>'+escapeHtml(roomCode)+'</b><br>Link mời: '+escapeHtml(shareLink());
+  });
+  peer.on('connection', function(c){ setupIncoming(c); });
+  peer.on('error', function(err){
+    if(err && err.type==='unavailable-id'){
+      if(hostRegAttempts<30){
+        hostRegAttempts++;
+        setStatus('Đang khôi phục phòng… (thử lại lần '+hostRegAttempts+')');
+        setTimeout(function(){ try{ peer.destroy(); }catch(e){} registerHost(); },2000);
+      } else {
+        setStatus('⚠️ Mã phòng này đang được dùng. Hãy quay lại trang chủ và tạo phòng mới.');
+      }
+    }
+    else setStatus('⚠️ Lỗi kết nối: '+(err&&err.type?err.type:'không rõ')+'. Hãy tải lại trang.');
+  });
+}
+
+/* --- Phía khách / khán giả: kết nối + tự kết nối lại --- */
+function wantGuestRetry(){ return isSpectator || everWelcomed || !!restoredSave; }
+function scheduleGuestRetry(){
+  if(localMode || isHost) return;
+  if(!wantGuestRetry()) return;
+  if(guestRetryTimer) return;
+  if(guestAttempts>=guestMaxAttempts){
+    setStatus(isSpectator ? '⚠️ Không kết nối lại được với phòng.' : 'Không tìm thấy chủ phòng — ván đã lưu sẽ giữ trong 15 phút');
+    return;
+  }
+  guestRetryTimer=setTimeout(function(){
+    guestRetryTimer=null;
+    guestAttempts++;
+    connectToHost();
+  },3000);
+}
+function setupOutgoing(c){
+  conn=c; connOpened=false;
+  var mySeq=connectSeq;
+  c.on('open', function(){
+    connOpened=true; guestAttempts=0;
+    sendTo(c,{type:'hello'});
+  });
+  c.on('data', onData);
+  c.on('close', function(){
+    if(conn!==c) return;
+    connected=false; hideReadyPopup();
+    if(isSpectator){ phase='waiting'; setStatus('Đang kết nối lại…'); scheduleGuestRetry(); }
+    else if(everWelcomed){ setStatus('Mất kết nối với chủ phòng — đang thử kết nối lại…'); scheduleGuestRetry(); }
+    else if(connOpened){ setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.'); }
+  });
+  c.on('error', function(){});
+  setTimeout(function(){
+    if(mySeq===connectSeq && !connOpened && !everWelcomed){ scheduleGuestRetry(); }
+  },6000);
+}
+function connectToHost(){
+  if(!peer) return;
+  connectSeq++;
+  setupOutgoing(peer.connect('duogames-'+roomCode, {reliable:true}));
 }
 function initOnline(){
   flipped = !isHost;
@@ -465,24 +702,15 @@ function initOnline(){
   if(typeof Peer==='undefined'){ setStatus('⚠️ Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.'); return; }
   if(isHost){
     copyBtn.style.display='';
-    peer=new Peer('duogames-'+roomCode);
-    peer.on('open', function(){
-      setStatus('Phòng đã sẵn sàng! Gửi mã phòng hoặc link mời cho đối thủ.');
-      roomInfoEl.innerHTML='Mã phòng: <b>'+escapeHtml(roomCode)+'</b><br>Link mời: '+escapeHtml(shareLink());
-    });
-    peer.on('connection', function(c){ setupConn(c); });
-    peer.on('error', function(err){
-      if(err && err.type==='unavailable-id'){ setStatus('⚠️ Mã phòng này đang được dùng. Hãy quay lại trang chủ và tạo phòng mới.'); }
-      else setStatus('⚠️ Lỗi kết nối: '+(err&&err.type?err.type:'không rõ')+'. Hãy tải lại trang.');
-    });
+    registerHost();
   } else {
     peer=new Peer();
-    peer.on('open', function(){
-      setStatus('Đang kết nối tới phòng '+roomCode+'…');
-      setupConn(peer.connect('duogames-'+roomCode, {reliable:true}));
-    });
+    peer.on('open', function(){ connectToHost(); });
     peer.on('error', function(err){
-      if(err && err.type==='peer-unavailable'){ setStatus('⚠️ Không tìm thấy phòng '+roomCode+'. Kiểm tra lại mã phòng hoặc chờ chủ phòng tạo phòng.'); }
+      if(err && err.type==='peer-unavailable'){
+        if(wantGuestRetry()){ setStatus('Đang kết nối lại với phòng…'); scheduleGuestRetry(); }
+        else setStatus('⚠️ Không tìm thấy phòng '+roomCode+'. Kiểm tra lại mã phòng hoặc chờ chủ phòng tạo phòng.');
+      }
       else setStatus('⚠️ Lỗi kết nối: '+(err&&err.type?err.type:'không rõ')+'. Hãy tải lại trang.');
     });
   }
@@ -493,8 +721,26 @@ if(localMode){
   modeLine.textContent='Chế độ 2 người chơi trên cùng máy (pass-and-play)';
   resetGame();
 } else {
-  resetGame();
+  restoredSave=loadSave();
+  if(restoredSave && restoredSave.game){
+    applyGameState(restoredSave.game);
+    if(gameOver){ phase='over'; }
+    else if(isHost && restoredSave.phase==='playing'){ phase='playing'; started=true; }
+    else if(isHost && restoredSave.phase==='ready'){ phase='ready'; }
+    else { phase='waiting'; }
+    if(isHost) playerGone=true;
+  } else {
+    resetGame();
+  }
   initOnline();
+  if(restoredSave){
+    if(isHost){
+      if(phase==='playing') setStatus('Đã khôi phục ván — chờ đối thủ quay lại…');
+      /* phase 'over': applyGameState đã hiện kết quả; 'ready': giữ trạng thái chờ mặc định */
+    } else if(!gameOver){
+      setStatus('Đang kết nối lại với phòng…');
+    }
+  }
 }
 })();
 </script>

@@ -141,12 +141,33 @@
   var gameOver = false;
   var moveCount = 0;
   var lastMove = null;     // {x, y}
+  var winner = null;       // 'X' | 'O' | 'draw' | null (để lưu/khôi phục)
+  var winCells = null;     // mảng 5 ô thắng hoặc null
 
   // Trạng thái mạng
   var peer = null;
-  var conn = null;
+  var conn = null;         // kết nối chính: với chủ phòng (khách) hoặc với người chơi (chủ phòng)
   var connected = false;
   var myMark = null;       // 'X' nếu là chủ phòng, 'O' nếu là khách (chế độ online)
+
+  // Phân vai phía chủ phòng + khán giả
+  var playerConn = null;   // kết nối của người chơi được chấp nhận (chỉ chủ phòng giữ)
+  var playerGone = false;  // người chơi đã từng vào nhưng đã mất kết nối
+  var spectators = [];     // các kết nối khán giả (chỉ chủ phòng giữ)
+
+  // Khôi phục ván đấu từ localStorage (giữ 15 phút)
+  var restoredSave = null; // bản lưu hợp lệ đọc lúc tải trang (hoặc null)
+  var restoredPhase = null;
+  var expectingSync = false;
+  var syncTimer = null;
+  var guestConnRetry = 0;
+  var specRetry = 0;
+  var wantReconnect = false;
+  var connectAttempt = 0;
+
+  // Vai trò của phía đang mở trang này
+  var isSpectator = false;
+  var spectatorPhase = 'waiting'; // 'waiting' | 'ready' | 'playing' | 'over'
 
   // Giai đoạn sẵn sàng (chỉ áp dụng online): 'waiting' | 'ready' | 'playing'
   // Chế độ local luôn ở 'playing'.
@@ -202,6 +223,7 @@
     readyOverlay.classList.remove('hidden');
     startCountdown();
     setStatus('Cả hai người chơi đã vào phòng!', 'Bấm "Sẵn sàng" trong cửa sổ đếm ngược để bắt đầu ván đấu.');
+    saveGame();
   }
 
   function maybeStartPlaying() {
@@ -210,6 +232,8 @@
     stopCountdown();
     readyOverlay.classList.add('hidden');
     setStatus('Cả hai đã sẵn sàng! Trận đấu bắt đầu.', '');
+    if (isHost) broadcastToSpectators({ type: 'start' });
+    saveGame();
     updateTurnStatus();
   }
 
@@ -298,6 +322,7 @@
   }
 
   function updateTurnStatus() {
+    if (isSpectator) { spectatorStatus(); return; }
     if (gameOver) return;
     if (isLocal) {
       setStatus('Lượt của ' + current + (current === 'X' ? ' (đi trước)' : ''), 'Chế độ 2 người trên cùng máy — hai người thay phiên nhau đánh.');
@@ -319,27 +344,38 @@
     render();
     if (win) {
       gameOver = true;
+      winner = mark;
+      winCells = win;
       win.forEach(function (p) { cells[p.y][p.x].classList.add('win'); });
-      if (isLocal) {
+      if (isSpectator) {
+        spectatorPhase = 'over';
+        setStatus('🎉 Quân ' + mark + ' thắng ván này!', 'Bạn đang xem ván đấu này.');
+      } else if (isLocal) {
         setStatus('🎉 ' + mark + ' thắng!', 'Bấm "Ván mới" để chơi lại.');
       } else if (mark === myMark) {
         setStatus('🎉 Bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
       } else {
         setStatus('Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
       }
+      saveGame();
       return;
     }
     if (moveCount >= SIZE * SIZE) {
       gameOver = true;
+      winner = 'draw';
+      if (isSpectator) spectatorPhase = 'over';
       setStatus('Hòa! Bàn cờ đã đầy.', 'Bấm "Ván mới" để chơi lại.');
+      saveGame();
       return;
     }
     current = mark === 'X' ? 'O' : 'X';
     updateTurnStatus();
+    saveGame();
   }
 
   function myTurnNow() {
     if (gameOver) return false;
+    if (isSpectator) return false;
     if (isLocal) return true;
     if (!online || !connected) return false;
     return current === myMark;
@@ -353,21 +389,30 @@
       sendMsg({ type: 'move', x: x, y: y });
     }
     placeMark(x, y, current);
+    if (online && isHost) broadcastToSpectators({ type: 'move', x: x, y: y });
   }
 
   function resetGame() {
     emptyBoard();
     current = 'X';
     gameOver = false;
+    winner = null;
+    winCells = null;
     moveCount = 0;
     lastMove = null;
     buildBoard();
     render();
+    if (isSpectator) {
+      spectatorPhase = 'ready';
+      spectatorStatus();
+      return;
+    }
     if (isLocal) {
       updateTurnStatus();
     } else if (online) {
       if (connected) enterReadyPhase(); // ván mới online: quay lại bước sẵn sàng
       else setStatus(isHost ? 'Đang chờ đối thủ vào phòng…' : 'Đang kết nối tới phòng…', '');
+      saveGame();
     }
   }
 
@@ -378,6 +423,103 @@
     }
   }
 
+  function sendTo(c, obj) {
+    if (c && c.open) {
+      try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+    }
+  }
+
+  function broadcastToSpectators(obj) {
+    spectators.forEach(function (c) { sendTo(c, obj); });
+  }
+
+  function currentSyncPhase() {
+    if (gameOver) return 'over';
+    if (phase === 'playing') return 'playing';
+    if (phase === 'ready') return 'ready';
+    return 'waiting';
+  }
+
+  // ---------- Lưu / khôi phục ván đấu (localStorage, giữ 15 phút) ----------
+  function serializeGame() {
+    return {
+      board: board.map(function (row) { return row.map(function (v) { return v === '' ? '.' : v; }).join(''); }),
+      current: current,
+      moveCount: moveCount,
+      lastMove: lastMove,
+      gameOver: gameOver,
+      winner: winner,
+      winCells: winCells
+    };
+  }
+
+  function applyState(g) {
+    if (!g || !g.board) return;
+    board = g.board.map(function (s) { return s.split('').map(function (ch) { return ch === '.' ? '' : ch; }); });
+    current = g.current;
+    moveCount = g.moveCount;
+    lastMove = g.lastMove;
+    gameOver = g.gameOver;
+    winner = g.winner;
+    winCells = g.winCells;
+    buildBoard();
+    render();
+    if (winCells) winCells.forEach(function (p) { cells[p.y][p.x].classList.add('win'); });
+  }
+
+  function saveGame() {
+    if (!online || isSpectator) return;
+    try {
+      var ph = gameOver ? 'over' : (phase === 'playing' ? 'playing' : 'ready');
+      var payload = { savedAt: Date.now(), role: isHost ? 'host' : 'guest', phase: ph, game: serializeGame() };
+      localStorage.setItem('duo-save-' + roomCode, JSON.stringify(payload));
+    } catch (e) { /* localStorage không khả dụng */ }
+  }
+
+  function loadSave() {
+    if (!online) return null;
+    try {
+      var raw = localStorage.getItem('duo-save-' + roomCode);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.game || typeof s.savedAt !== 'number') return null;
+      if (Date.now() - s.savedAt >= 15 * 60 * 1000) {
+        localStorage.removeItem('duo-save-' + roomCode);
+        return null;
+      }
+      if (s.role !== (isHost ? 'host' : 'guest')) return null;
+      return s;
+    } catch (e) { return null; }
+  }
+
+  function showResultStatus() {
+    if (winner === 'draw') {
+      setStatus('Hòa! Bàn cờ đã đầy.', 'Bấm "Ván mới" để chơi lại.');
+    } else if (winner && winner === myMark) {
+      setStatus('🎉 Bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
+    } else if (winner) {
+      setStatus('Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
+    }
+  }
+
+  function spectatorStatus() {
+    var sub;
+    if (spectatorPhase === 'over') {
+      sub = winner === 'draw' ? 'Ván đấu đã kết thúc: hòa.' : (winner ? 'Ván đấu đã kết thúc: quân ' + winner + ' thắng.' : 'Ván đấu đã kết thúc.');
+    } else if (spectatorPhase === 'playing') {
+      sub = 'Lượt của quân ' + current + ' (' + (current === 'X' ? 'chủ phòng' : 'khách') + ').';
+    } else {
+      sub = 'Đang chờ hai người chơi sẵn sàng để bắt đầu ván…';
+    }
+    setStatus('👁 Bạn đang xem ván này', sub);
+  }
+
+  function applySpectatorUI() {
+    btnRestart.classList.add('hidden');
+    btnResign.classList.add('hidden');
+    youAreEl.textContent = 'Bạn đang xem: X = chủ phòng, O = khách';
+  }
+
   function shareLink() {
     var url = new URL(location.href);
     url.searchParams.set('room', roomCode);
@@ -386,50 +528,251 @@
     return url.toString();
   }
 
-  function onConnectionOpen() {
-    connected = true;
-    btnResign.classList.remove('hidden');
-    youAreEl.textContent = 'Bạn là quân ' + myMark + (myMark === 'X' ? ' (đi trước)' : '');
-    enterReadyPhase(); // đủ 2 người: hiện popup đếm ngược chờ cả hai sẵn sàng
+  // ---------- Bắt tay hello / welcome (phía chủ phòng) ----------
+  function hostOnHello(c) {
+    if (c._role) return; // kết nối này đã được phân vai
+    var slotFree = !playerConn || playerGone || !playerConn.open;
+    if (slotFree) {
+      playerConn = c;
+      conn = c;
+      c._role = 'player';
+      playerGone = false;
+      connected = true;
+      btnResign.classList.remove('hidden');
+      youAreEl.textContent = 'Bạn là quân X (đi trước)';
+      sendTo(c, { type: 'welcome', as: 'player' });
+      var inProgress = gameOver || moveCount > 0 || phase === 'playing';
+      if (inProgress) {
+        // Ván đang dở (hoặc đã kết thúc): đồng bộ ngay, chơi tiếp không qua popup sẵn sàng
+        var ph = gameOver ? 'over' : 'playing';
+        phase = ph;
+        stopCountdown();
+        readyOverlay.classList.add('hidden');
+        sendTo(c, { type: 'sync', state: serializeGame(), phase: ph });
+        if (ph === 'over') showResultStatus(); else updateTurnStatus();
+      } else {
+        enterReadyPhase(); // bàn mới: cả hai vào bước sẵn sàng như thường lệ
+      }
+      saveGame();
+    } else {
+      c._role = 'spectator';
+      spectators.push(c);
+      sendTo(c, { type: 'welcome', as: 'spectator' });
+      sendTo(c, { type: 'sync', state: serializeGame(), phase: currentSyncPhase() });
+    }
   }
 
-  function onConnectionClosed(msg) {
+  function hostHandleData(c, data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'hello') { hostOnHello(c); return; }
+    if (c._role === 'player') handleData(data); // khán giả chỉ gửi hello, bỏ qua phần còn lại
+  }
+
+  function hostOnConnClose(c) {
+    if (c._closed) return;
+    c._closed = true;
+    if (c._role === 'spectator') {
+      spectators = spectators.filter(function (s) { return s !== c; });
+      return;
+    }
+    if (c._role === 'player' && c === playerConn) {
+      playerConn = null;
+      conn = null;
+      connected = false;
+      playerGone = true;
+      stopCountdown();
+      readyOverlay.classList.add('hidden');
+      if (phase === 'ready') phase = 'waiting';
+      if (gameOver) {
+        setStatus('Đối thủ đã rời phòng.', 'Ván đấu đã kết thúc. Bấm "Ván mới" để chơi lại.');
+      } else {
+        setStatus('Đối thủ mất kết nối — tiến trình đã lưu, chờ đối thủ quay lại trong 15 phút…', 'Đừng đóng trang này; khi đối thủ quay lại, ván sẽ tiếp tục ngay.');
+      }
+      saveGame();
+    }
+  }
+
+  // ---------- Mất kết nối (phía khách / khán giả) ----------
+  function scheduleReconnect() {
+    if (specRetry >= 10) {
+      wantReconnect = false;
+      setStatus('Mất kết nối với chủ phòng.', 'Đã thử kết nối lại nhiều lần không được. Hãy tải lại trang để xem tiếp.');
+      return;
+    }
+    specRetry++;
+    setStatus('Đang kết nối lại…', 'Mất kết nối với chủ phòng, đang thử kết nối lại…');
+    setTimeout(connectToHost, 3000);
+  }
+
+  function guestOnHostGone() {
     connected = false;
-    gameOver = true;
-    phase = 'waiting';
     stopCountdown();
     readyOverlay.classList.add('hidden');
-    setStatus(msg || 'Kết nối đã đóng.', 'Hãy tải lại trang hoặc tạo phòng mới để chơi tiếp.');
+    if (phase === 'ready') phase = 'waiting';
+    if (isSpectator) {
+      wantReconnect = true;
+      scheduleReconnect();
+      return;
+    }
+    if (gameOver) {
+      setStatus('Chủ phòng đã rời phòng.', 'Ván đấu đã kết thúc.');
+    } else if (moveCount > 0 || restoredSave) {
+      setStatus('Mất kết nối với chủ phòng — tiến trình đã lưu, ván sẽ giữ trong 15 phút…', 'Hãy tải lại trang để kết nối lại và chơi tiếp.');
+    } else {
+      setStatus('Kết nối đã đóng.', 'Hãy tải lại trang hoặc tạo phòng mới để chơi tiếp.');
+    }
+    saveGame();
   }
 
   function handleData(data) {
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'move') {
+    if (data.type === 'welcome') {
+      wantReconnect = false;
+      specRetry = 0;
+      guestConnRetry = 0;
+      connected = true;
+      if (data.as === 'spectator') {
+        isSpectator = true;
+        applySpectatorUI();
+        setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ ván đấu…');
+      } else {
+        isSpectator = false;
+        myMark = 'O';
+        btnResign.classList.remove('hidden');
+        btnRestart.classList.remove('hidden');
+        youAreEl.textContent = 'Bạn là quân O';
+        if (restoredPhase === 'playing' || restoredPhase === 'over') {
+          // Đã có ván lưu: chờ chủ phòng gửi sync (trạng thái chuẩn) trong giây lát
+          expectingSync = true;
+          clearTimeout(syncTimer);
+          syncTimer = setTimeout(function () {
+            if (!expectingSync) return;
+            expectingSync = false;
+            restoredSave = null;
+            restoredPhase = null;
+            try { localStorage.removeItem('duo-save-' + roomCode); } catch (e) {}
+            resetGame(); // chủ phòng không có ván dở: bắt đầu lại từ bước sẵn sàng
+          }, 1500);
+        } else {
+          enterReadyPhase(); // bàn mới: hiện popup đếm ngược chờ cả hai sẵn sàng
+        }
+      }
+    } else if (data.type === 'sync') {
+      expectingSync = false;
+      clearTimeout(syncTimer);
+      applyState(data.state);
+      if (isSpectator) {
+        spectatorPhase = data.phase;
+        spectatorStatus();
+      } else {
+        phase = data.phase === 'over' ? 'over' : 'playing';
+        stopCountdown();
+        readyOverlay.classList.add('hidden');
+        if (data.phase === 'over') {
+          showResultStatus();
+        } else {
+          setStatus('Đã khôi phục ván đấu — tiếp tục chơi', current === myMark ? 'Lượt của bạn (' + myMark + ')' : 'Chờ đối thủ đi tiếp…');
+        }
+      }
+      saveGame();
+    } else if (data.type === 'start') {
+      if (isSpectator) { spectatorPhase = 'playing'; spectatorStatus(); }
+    } else if (data.type === 'move') {
       var x = data.x, y = data.y;
       if (typeof x !== 'number' || typeof y !== 'number') return;
       if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
-      if (phase !== 'playing') return; // chưa qua bước sẵn sàng thì chưa nhận nước đi
+      if (!isSpectator && phase !== 'playing') return; // chưa qua bước sẵn sàng thì chưa nhận nước đi
       if (gameOver || board[y][x] !== '') return;
-      if (current !== (myMark === 'X' ? 'O' : 'X')) return;
+      if (!isSpectator && current !== (myMark === 'X' ? 'O' : 'X')) return;
       placeMark(x, y, current);
+      if (isHost) broadcastToSpectators({ type: 'move', x: x, y: y }); // chủ phòng chuyển tiếp cho khán giả
     } else if (data.type === 'ready') {
       oppReady = true;
       updateReadyUI();
       maybeStartPlaying();
     } else if (data.type === 'restart') {
       resetGame();
+      if (isHost) broadcastToSpectators({ type: 'restart' });
     } else if (data.type === 'resign') {
       gameOver = true;
-      setStatus('🎉 Đối thủ đã xin thua — bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
+      if (isSpectator) {
+        winner = data.by === 'host' ? 'O' : 'X';
+        spectatorPhase = 'over';
+        setStatus('🎉 Quân ' + winner + ' thắng (đối thủ xin thua)!', 'Bạn đang xem ván đấu này.');
+      } else {
+        winner = myMark;
+        setStatus('🎉 Đối thủ đã xin thua — bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
+      }
+      saveGame();
     }
   }
 
-  function wireConnection(c) {
-    conn = c;
-    conn.on('open', onConnectionOpen);
-    conn.on('data', handleData);
-    conn.on('close', function () { onConnectionClosed('Đối thủ đã rời phòng. Kết nối đã đóng.'); });
-    conn.on('error', function () { onConnectionClosed('Kết nối gặp lỗi. Vui lòng thử lại.'); });
+  function hostWireConnection(c) {
+    c.on('data', function (data) { hostHandleData(c, data); });
+    c.on('close', function () { hostOnConnClose(c); });
+    c.on('error', function () { hostOnConnClose(c); });
+  }
+
+  function wireGuestConnection(c, att) {
+    var opened = false;
+    c.on('open', function () {
+      if (att !== connectAttempt) return;
+      opened = true;
+      conn = c;
+      try { c.send({ type: 'hello' }); } catch (e) { /* bỏ qua */ }
+    });
+    c.on('data', function (data) {
+      if (att !== connectAttempt) return;
+      handleData(data);
+    });
+    c.on('close', function () {
+      if (att !== connectAttempt || !opened) return;
+      guestOnHostGone();
+    });
+    c.on('error', function () { /* lỗi cấp peer được xử lý ở peer.on('error') */ });
+  }
+
+  function connectToHost() {
+    if (!peer || peer.destroyed) return;
+    connectAttempt++;
+    var c = peer.connect('duogames-' + roomCode, { reliable: true });
+    wireGuestConnection(c, connectAttempt);
+  }
+
+  var hostRegRetry = 0;
+  function registerHost() {
+    peer = new Peer('duogames-' + roomCode);
+    peer.on('open', function () {
+      if (restoredSave) {
+        if (restoredPhase === 'over') {
+          showResultStatus();
+        } else if (restoredPhase === 'playing') {
+          setStatus('Đã khôi phục ván — chờ đối thủ quay lại…', 'Tiến trình ván đấu được giữ trong 15 phút.');
+        } else {
+          setStatus('Đã khôi phục phòng — chờ đối thủ vào phòng…', 'Khi đối thủ vào phòng, cả hai sẽ bấm Sẵn sàng để bắt đầu.');
+        }
+      } else {
+        setStatus('Đang chờ đối thủ vào phòng…', 'Phòng đã sẵn sàng. Bạn là quân X và đi trước.');
+      }
+    });
+    peer.on('connection', function (c) { hostWireConnection(c); });
+    peer.on('error', function (err) {
+      if (err && err.type === 'unavailable-id') {
+        if (restoredSave && hostRegRetry < 30) {
+          // Đăng ký cũ còn sót trên máy chủ: thử đăng ký lại mỗi 2 giây, tối đa ~1 phút
+          hostRegRetry++;
+          setStatus('Đang khôi phục phòng…', 'Đang đăng ký lại mã phòng, vui lòng chờ vài giây…');
+          setTimeout(function () {
+            try { peer.destroy(); } catch (e) {}
+            registerHost();
+          }, 2000);
+        } else {
+          setStatus('Mã phòng này đang được dùng.', 'Hãy tạo phòng khác với mã mới.');
+        }
+      } else {
+        setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+      }
+    });
   }
 
   function startOnline() {
@@ -441,33 +784,36 @@
     }
     if (isHost) {
       myMark = 'X';
+      youAreEl.textContent = 'Bạn là quân X (đi trước)';
       document.getElementById('shareText').textContent = 'Gửi link mời này cho đối thủ để họ vào phòng:';
-      setStatus('Đang chờ đối thủ vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Bạn là quân X và đi trước.');
-      peer = new Peer('duogames-' + roomCode);
-      peer.on('open', function () {
-        setStatus('Đang chờ đối thủ vào phòng…', 'Phòng đã sẵn sàng. Bạn là quân X và đi trước.');
-      });
-      peer.on('connection', function (c) { wireConnection(c); });
-      peer.on('error', function (err) {
-        if (err && err.type === 'unavailable-id') {
-          setStatus('Mã phòng này đang được dùng.', 'Hãy tạo phòng khác với mã mới.');
-        } else {
-          setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
-        }
-      });
+      if (!restoredSave) {
+        setStatus('Đang chờ đối thủ vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Bạn là quân X và đi trước.');
+      }
+      registerHost();
     } else {
-      myMark = 'O';
-      document.getElementById('shareText').textContent = 'Bạn đang vào phòng với tư cách khách (quân O).';
+      document.getElementById('shareText').textContent = 'Bạn đang vào phòng với tư cách khách.';
       btnCopy.classList.add('hidden');
-      setStatus('Đang kết nối tới phòng…', 'Vui lòng chờ chủ phòng sẵn sàng.');
+      if (restoredSave) {
+        setStatus('Đang kết nối lại với phòng…', 'Đang khôi phục ván đấu đã lưu, vui lòng chờ.');
+      } else {
+        setStatus('Đang kết nối tới phòng…', 'Vui lòng chờ chủ phòng sẵn sàng.');
+      }
       peer = new Peer();
-      peer.on('open', function () {
-        var c = peer.connect('duogames-' + roomCode, { reliable: true });
-        wireConnection(c);
-      });
+      peer.on('open', function () { connectToHost(); });
       peer.on('error', function (err) {
         if (err && err.type === 'peer-unavailable') {
-          onConnectionClosed('Không tìm thấy phòng ' + roomCode + '. Có thể chủ phòng chưa tạo phòng hoặc mã phòng chưa đúng.');
+          if (restoredSave && guestConnRetry < 40) {
+            // Khách tải lại trang mà chủ phòng chưa trực tuyến: thử lại mỗi 3 giây, tối đa ~2 phút
+            guestConnRetry++;
+            setStatus('Đang kết nối lại với phòng…', 'Chủ phòng chưa trực tuyến — đang thử lại (lần ' + guestConnRetry + ')…');
+            setTimeout(connectToHost, 3000);
+          } else if (wantReconnect) {
+            scheduleReconnect();
+          } else if (restoredSave) {
+            setStatus('Không tìm thấy chủ phòng — ván đã lưu sẽ giữ trong 15 phút', 'Hãy thử tải lại trang sau ít phút để chơi tiếp.');
+          } else {
+            setStatus('Không tìm thấy phòng ' + roomCode + '.', 'Có thể chủ phòng chưa tạo phòng hoặc mã phòng chưa đúng. Hãy tải lại trang và thử lại.');
+          }
         } else {
           setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
         }
@@ -485,15 +831,22 @@
   });
 
   btnRestart.addEventListener('click', function () {
-    if (online) sendMsg({ type: 'restart' });
+    if (isSpectator) return;
+    if (online) {
+      sendMsg({ type: 'restart' });
+      if (isHost) broadcastToSpectators({ type: 'restart' });
+    }
     resetGame();
   });
 
   btnResign.addEventListener('click', function () {
-    if (!online || gameOver) return;
+    if (!online || gameOver || isSpectator) return;
     sendMsg({ type: 'resign' });
+    if (isHost) broadcastToSpectators({ type: 'resign', by: 'host' });
     gameOver = true;
+    winner = myMark === 'X' ? 'O' : 'X';
     setStatus('Bạn đã xin thua. Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
+    saveGame();
   });
 
   btnCopy.addEventListener('click', function () {
@@ -530,6 +883,15 @@
   emptyBoard();
   buildBoard();
   render();
+
+  if (online) {
+    var save = loadSave();
+    if (save) {
+      restoredSave = save;
+      restoredPhase = save.phase;
+      applyState(save.game); // hiện lại bàn cờ đã lưu trong lúc chờ kết nối lại
+    }
+  }
 
   if (isLocal) {
     youAreEl.textContent = 'Chế độ cùng máy: X và O thay phiên';
