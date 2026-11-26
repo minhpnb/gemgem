@@ -79,8 +79,17 @@
   </div>
 
   <div class="card">
+    <h2>🐴 Cờ cá ngựa</h2>
+    <p>Chơi được 2–4 người: đổ xúc xắc, xuất chuồng, đá ngựa đối thủ về chuồng và đưa cả 4 ngựa về đích trước.</p>
+    <div class="row">
+      <button class="btn-primary" onclick="createRoom('N','ngua.html')">Tạo phòng</button>
+      <a class="btn btn-ghost" href="ngua.html?local=1">Chơi 2–4 người cùng máy</a>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>🔑 Vào phòng bằng mã</h2>
-    <p>Nhận được mã phòng từ bạn bè? Nhập vào đây (mã bắt đầu bằng V = cờ vua, T = cờ tướng, C = cờ caro).</p>
+    <p>Nhận được mã phòng từ bạn bè? Nhập vào đây (mã bắt đầu bằng V = cờ vua, T = cờ tướng, C = cờ caro, N = cờ cá ngựa).</p>
     <div class="row">
       <input id="code" maxlength="6" placeholder="Ví dụ: VAB12C" autocomplete="off">
       <button class="btn-primary" onclick="joinRoom()">Vào phòng</button>
@@ -92,7 +101,7 @@
 </main>
 <script>
   var ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  var PAGES = { V: 'chess.html', T: 'xiangqi.html', C: 'caro.html' };
+  var PAGES = { V: 'chess.html', T: 'xiangqi.html', C: 'caro.html', N: 'ngua.html' };
   function randomCode(prefix) {
     var s = prefix;
     for (var i = 0; i < 5; i++) s += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
@@ -106,7 +115,7 @@
     var err = document.getElementById('err');
     var page = PAGES[code.charAt(0)];
     if (!page || code.length !== 6) {
-      err.textContent = 'Mã phòng chưa đúng — mã gồm 6 ký tự, bắt đầu bằng V, T hoặc C.';
+      err.textContent = 'Mã phòng chưa đúng — mã gồm 6 ký tự, bắt đầu bằng V, T, C hoặc N.';
       return;
     }
     err.textContent = '';
