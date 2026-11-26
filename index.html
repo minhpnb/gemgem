@@ -21,12 +21,35 @@
   .err { color: #f87171; min-height: 1.4em; margin-top: 8px; }
   footer { margin-top: 40px; color: #64748b; font-size: .9rem; }
   a { color: #38bdf8; }
+  .profile { margin: 0 0 4px; color: #cbd5e1; }
+  .profile b { color: #e2e8f0; }
+  .linkbtn { background: none; border: 0; color: #38bdf8; cursor: pointer; font-size: .95rem; padding: 0; text-decoration: underline; }
+  .overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .8); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .overlay.hidden { display: none; }
+  .dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; max-width: 420px; width: 100%; }
+  .dialog h2 { margin: 0 0 8px; font-size: 1.25rem; }
+  .dialog p { margin: 0 0 14px; color: #94a3b8; }
+  .dialog input { width: 100%; box-sizing: border-box; letter-spacing: normal; text-transform: none; margin-bottom: 12px; }
+  .dialog .row { justify-content: space-between; }
 </style>
 </head>
 <body>
 <main>
   <h1>🎲 Phòng Game 2 Người</h1>
   <p class="lead">Tạo phòng, gửi <b>mã phòng</b> hoặc <b>link mời</b> cho bạn bè — vào là chơi cùng nhau, không cần đăng ký.</p>
+  <p class="profile">👤 Tên của bạn: <b id="myNameLabel">(chưa đặt)</b> <button class="linkbtn" id="editNameBtn" type="button">Đổi tên</button></p>
+
+  <div class="overlay hidden" id="nameOverlay">
+    <div class="dialog">
+      <h2>👤 Tên của bạn</h2>
+      <p>Nhập tên hiển thị khi chơi — tên được lưu trên trình duyệt này, lần sau không cần nhập lại.</p>
+      <input id="nameInput" maxlength="24" placeholder="Ví dụ: Chó Đỏ 11" autocomplete="off">
+      <div class="row">
+        <button class="btn btn-ghost" id="diceBtn" type="button">🎲 Tên ngẫu nhiên</button>
+        <button class="btn-primary" id="saveNameBtn" type="button">Lưu tên</button>
+      </div>
+    </div>
+  </div>
 
   <div class="card">
     <h2>♞ Cờ vua</h2>
@@ -92,6 +115,58 @@
   document.getElementById('code').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') joinRoom();
   });
+
+  // ----- Tên người dùng (lưu vĩnh viễn trên trình duyệt này, dùng chung cả 3 game) -----
+  var PROFILE_KEY = 'duo-profile';
+  var ANIMALS = ['Chó','Mèo','Rùa','Gà','Vịt','Cá','Khỉ','Hổ','Thỏ','Heo','Bò','Dê','Ngựa','Chim','Ếch','Gấu'];
+  var DESCRIPTORS = ['Đỏ','Xấu','Xanh','Nhanh','Lười','Béo','Dữ','Hiền','Ngầu','Khôn','Lém','Vui','Cao','Lạnh','Tếu','Gầy'];
+  function genRandomName() {
+    var a = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
+    var d = DESCRIPTORS[Math.floor(Math.random() * DESCRIPTORS.length)];
+    var n = 1 + Math.floor(Math.random() * 99);
+    return a + ' ' + d + ' ' + n;
+  }
+  function loadName() {
+    try {
+      var raw = localStorage.getItem(PROFILE_KEY);
+      if (!raw) return '';
+      var obj = JSON.parse(raw);
+      return (obj && typeof obj.name === 'string') ? obj.name.trim().slice(0, 24) : '';
+    } catch (e) { return ''; }
+  }
+  function saveName(name) {
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify({ name: name })); } catch (e) {}
+  }
+  var nameOverlay = document.getElementById('nameOverlay');
+  var nameInput = document.getElementById('nameInput');
+  var myNameLabel = document.getElementById('myNameLabel');
+  function refreshNameLabel() {
+    var n = loadName();
+    myNameLabel.textContent = n || '(chưa đặt)';
+  }
+  function openNameDialog() {
+    nameInput.value = loadName() || genRandomName();
+    nameOverlay.classList.remove('hidden');
+    nameInput.focus();
+    nameInput.select();
+  }
+  function closeNameDialog() { nameOverlay.classList.add('hidden'); }
+  document.getElementById('diceBtn').addEventListener('click', function () {
+    nameInput.value = genRandomName();
+    nameInput.focus();
+  });
+  document.getElementById('saveNameBtn').addEventListener('click', function () {
+    var n = nameInput.value.trim().slice(0, 24) || genRandomName();
+    saveName(n);
+    refreshNameLabel();
+    closeNameDialog();
+  });
+  nameInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') document.getElementById('saveNameBtn').click();
+  });
+  document.getElementById('editNameBtn').addEventListener('click', openNameDialog);
+  refreshNameLabel();
+  if (!loadName()) openNameDialog(); // lần đầu truy cập: hỏi tên ngay
 </script>
 </body>
 </html>
