@@ -196,6 +196,7 @@
   var specRetry = 0;
   var wantReconnect = false;
   var connectAttempt = 0;
+  var guestRetryTimer = null; // lịch thử lại kết nối đang chờ (phía khách) — tránh hẹn trùng
 
   // Tên hiển thị (hồ sơ lưu vĩnh viễn trong localStorage, key 'duo-profile')
   var myName = '';         // tên của người đang mở trang này (rỗng = chưa đặt)
@@ -765,11 +766,17 @@
 
   function hostHandleData(c, data) {
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'hello') { hostOnHello(c, data.name); return; }
+    if (data.type === 'hello') {
+      c._helloSeen = true;
+      if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
+      hostOnHello(c, data.name);
+      return;
+    }
     if (c._role === 'player') handleData(data); // khán giả chỉ gửi hello, bỏ qua phần còn lại
   }
 
   function hostOnConnClose(c) {
+    if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
     if (c._closed) return;
     c._closed = true;
     if (c._role === 'spectator') {
@@ -831,6 +838,7 @@
       wantReconnect = false;
       specRetry = 0;
       guestConnRetry = 0;
+      if (guestRetryTimer) { clearTimeout(guestRetryTimer); guestRetryTimer = null; }
       connected = true;
       if (data.names) {
         if (data.as === 'spectator') {
@@ -977,16 +985,85 @@
   }
 
   function hostWireConnection(c) {
+    // Watchdog phía chủ phòng: kết nối đã tới (tín hiệu thông) nhưng sau 15
+    // giây vẫn không mở và không gửi hello — nhiều khả năng phía khách bị
+    // chặn WebRTC (ICE không thông). Dọn kết nối treo để không giữ chỗ người
+    // chơi, và gợi ý cho chủ phòng nếu vẫn đang chờ người vào.
+    c._pendingTimer = setTimeout(function () {
+      c._pendingTimer = null;
+      if (c._closed || c._role || c._helloSeen) return;
+      c._closed = true;
+      try { c.close(); } catch (e) { /* bỏ qua */ }
+      var waitingForPlayer = !playerConn || playerGone || !playerConn.open;
+      if (waitingForPlayer) {
+        setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông — có thể mạng của họ chặn WebRTC.', 'Nếu họ vẫn không vào được, hãy bảo họ thử mạng/trình duyệt khác.');
+      }
+    }, 15000);
     c.on('data', function (data) { hostHandleData(c, data); });
     c.on('close', function () { hostOnConnClose(c); });
     c.on('error', function () { hostOnConnClose(c); });
   }
 
+  // ---------- Watchdog kết nối (phía khách): ICE/WebRTC bị chặn ----------
+  // Tín hiệu qua PeerJS Cloud có thể thông nhưng kênh dữ liệu WebRTC không
+  // bao giờ mở được (mạng chặn UDP/STUN/TURN, tường lửa, VPN…). Nếu không
+  // canh, khách kẹt ở "Đang kết nối…" mãi mãi. Mỗi lần thử được 12 giây để
+  // 'open'; quá hạn / 'error' / ICE 'failed' / bị đóng trước khi mở → bỏ lần
+  // thử đó và thử lại trong CÙNG ngân sách guestConnRetry (ván đã lưu: 40
+  // lần ≈ 2 phút như cũ; vào phòng mới: 6 lần) rồi báo lỗi rõ ràng.
+  function guestRetryLimit() { return restoredSave ? 40 : 6; }
+
+  function guestConnectFailed() {
+    if (restoredSave) {
+      setStatus('Không tìm thấy chủ phòng — ván đã lưu sẽ giữ trong 15 phút', 'Hãy thử tải lại trang sau ít phút để chơi tiếp.');
+    } else {
+      setStatus('Không kết nối được tới chủ phòng.', 'Có thể do mạng hoặc trình duyệt đang chặn kết nối WebRTC (tường lửa, VPN, chặn UDP), hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng/trình duyệt hoặc nhờ chủ phòng tạo phòng mới.');
+    }
+  }
+
+  function scheduleGuestRetry(subMsg) {
+    if (wantReconnect) { scheduleReconnect(); return; }
+    if (guestRetryTimer) return; // đã có một lịch thử lại đang chờ — không nhân đôi
+    if (guestConnRetry >= guestRetryLimit()) { guestConnectFailed(); return; }
+    guestConnRetry++;
+    setStatus('Đang thử kết nối lại… (lần ' + guestConnRetry + ')', subMsg || 'Đang thử kết nối lại với chủ phòng…');
+    guestRetryTimer = setTimeout(function () {
+      guestRetryTimer = null;
+      connectToHost();
+    }, 3000);
+  }
+
   function wireGuestConnection(c, att) {
     var opened = false;
+    var goneHandled = false;
+    var watchdog = setTimeout(function () { onAttemptFail(); }, 12000);
+
+    function clearWatchdog() {
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    }
+    // Kết nối chết TRƯỚC khi mở: bỏ lần thử này, vô hiệu hoá mọi handler còn
+    // lại của nó (tăng connectAttempt) rồi thử lại theo ngân sách chung.
+    function onAttemptFail() {
+      if (opened || att !== connectAttempt) return;
+      clearWatchdog();
+      connectAttempt++;
+      if (conn === c) conn = null;
+      try { c.close(); } catch (e) { /* bỏ qua */ }
+      scheduleGuestRetry('Kết nối tới chủ phòng chưa thông — có thể mạng đang chặn WebRTC, đang thử lại…');
+    }
+    // Kết nối chết SAU khi đã mở (rớt giữa ván): đi theo luồng mất kết nối
+    // như khi nhận 'close' trước đây.
+    function onGone() {
+      if (goneHandled || att !== connectAttempt) return;
+      goneHandled = true;
+      clearWatchdog();
+      guestOnHostGone();
+    }
+
     c.on('open', function () {
       if (att !== connectAttempt) return;
       opened = true;
+      clearWatchdog();
       conn = c;
       try { c.send({ type: 'hello', name: myName }); } catch (e) { /* bỏ qua */ }
     });
@@ -995,10 +1072,25 @@
       handleData(data);
     });
     c.on('close', function () {
-      if (att !== connectAttempt || !opened) return;
-      guestOnHostGone();
+      if (att !== connectAttempt) return;
+      if (!opened) { onAttemptFail(); return; }
+      onGone();
     });
-    c.on('error', function () { /* lỗi cấp peer được xử lý ở peer.on('error') */ });
+    c.on('error', function () {
+      if (att !== connectAttempt) return;
+      if (!opened) { onAttemptFail(); return; }
+      onGone();
+    });
+    // ICE 'failed' là dấu hiệu chắc chắn nhất cho thấy WebRTC bị chặn.
+    try {
+      var pc = c.peerConnection;
+      if (pc && typeof pc.addEventListener === 'function') {
+        pc.addEventListener('iceconnectionstatechange', function () {
+          if (pc.iceConnectionState !== 'failed') return;
+          if (!opened) onAttemptFail(); else onGone();
+        });
+      }
+    } catch (e) { /* bỏ qua: watchdog 12 giây vẫn canh */ }
   }
 
   function connectToHost() {
@@ -1071,15 +1163,13 @@
       peer.on('open', function () { connectToHost(); });
       peer.on('error', function (err) {
         if (err && err.type === 'peer-unavailable') {
-          if (restoredSave && guestConnRetry < 40) {
-            // Khách tải lại trang mà chủ phòng chưa trực tuyến: thử lại mỗi 3 giây, tối đa ~2 phút
-            guestConnRetry++;
-            setStatus('Đang kết nối lại với phòng…', 'Chủ phòng chưa trực tuyến — đang thử lại (lần ' + guestConnRetry + ')…');
-            setTimeout(connectToHost, 3000);
+          if (restoredSave) {
+            // Khách tải lại trang mà chủ phòng chưa trực tuyến: thử lại theo
+            // CÙNG ngân sách guestConnRetry với watchdog ICE (tối đa ~2 phút);
+            // hết ngân sách, scheduleGuestRetry tự báo "Không tìm thấy chủ phòng…".
+            scheduleGuestRetry('Chủ phòng chưa trực tuyến — đang thử lại…');
           } else if (wantReconnect) {
             scheduleReconnect();
-          } else if (restoredSave) {
-            setStatus('Không tìm thấy chủ phòng — ván đã lưu sẽ giữ trong 15 phút', 'Hãy thử tải lại trang sau ít phút để chơi tiếp.');
           } else {
             setStatus('Không tìm thấy phòng ' + roomCode + '.', 'Có thể chủ phòng chưa tạo phòng hoặc mã phòng chưa đúng. Hãy tải lại trang và thử lại.');
           }

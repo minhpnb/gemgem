@@ -258,6 +258,10 @@ var scoreCounted=false;            /* ván hiện tại đã tính điểm chưa
 var playerConn=null, playerGone=false, specConns={};
 var isSpectator=false, everWelcomed=false, restoredSave=null;
 var connOpened=false, guestAttempts=0, guestMaxAttempts=40, guestRetryTimer=null, connectSeq=0, hostRegAttempts=0;
+var guestRetryDeadline=0, lastFailKind=''; /* watchdog kết nối: hạn ~2 phút cho khách có save/đã vào phòng; lastFailKind để chọn thông báo cuối */
+var GUEST_FRESH_RETRIES=5; /* khách mới vào (chưa save): thử lại tối đa 5 lần (tổng ~6 lần kết nối) rồi báo lỗi rõ ràng, không treo ở "Đang kết nối…" */
+var BLOCKED_MSG='Không kết nối được tới chủ phòng. Có thể do mạng hoặc trình duyệt đang chặn kết nối WebRTC (tường lửa, VPN, chặn UDP), hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng/trình duyệt hoặc nhờ chủ phòng tạo phòng mới.';
+var HOST_HINT_MSG='Có người đang cố vào phòng nhưng kết nối chưa thông — có thể mạng của họ chặn WebRTC. Nếu họ vẫn không vào được, hãy bảo họ thử mạng/trình duyệt khác.';
 var SAVE_KEY='duo-save-'+roomCode;
 
 var statusEl=document.getElementById('status'),
@@ -781,8 +785,11 @@ function onPlayerGone(){
   saveGame();
 }
 function hostAssignRole(c, helloName){
-  if(!playerConn || playerGone){
+  if(!playerConn || playerGone || !playerConn.open){
+    /* slot trống, hoặc người chơi cũ đã đi, hoặc kết nối cũ đã chết (đóng mà sự kiện close bị lỡ) → nhận người chơi (mới/quay lại) */
+    var staleConn = (playerConn && playerConn!==c) ? playerConn : null;
     playerConn=c; conn=c; playerGone=false; connected=true; started=true;
+    if(staleConn){ try{ staleConn.close(); }catch(e){} }
     if(helloName) oppName=sanitizeName(helloName);
     refreshNameUI();
     sendTo(c,{type:'welcome', as:'player', names:currentNames()});
@@ -805,14 +812,30 @@ function hostAssignRole(c, helloName){
   return 'spectator';
 }
 function setupIncoming(c){
-  var role=null;
+  var role=null, gotHello=false, opened=false, dead=false;
+  /* Watchdog: kết nối tới nhưng sau 15s vẫn chưa mở / chưa gửi hello (thường do ICE bị chặn)
+     → dọn kết nối treo để không giữ chỗ, và gợi ý cho chủ phòng nếu vẫn đang chờ người chơi. */
+  var helloWatchdog=setTimeout(function(){
+    if(gotHello || dead) return;
+    dead=true;
+    try{ c.close(); }catch(e){}
+    try{ if(c.peerConnection && c.peerConnection.close) c.peerConnection.close(); }catch(e){}
+    if(!opened && (!playerConn || playerGone) && !connected){
+      setStatus(HOST_HINT_MSG);
+    }
+  },15000);
+  c.on('open', function(){ opened=true; });
   c.on('data', function(data){
+    if(dead) return; /* kết nối đã bị watchdog dọn: bỏ qua, kể cả hello đến muộn */
     if(!data || typeof data!=='object') return;
-    if(data.type==='hello' && !role){ role=hostAssignRole(c, data.name); return; }
+    if(data.type==='hello' && !role){ gotHello=true; clearTimeout(helloWatchdog); role=hostAssignRole(c, data.name); return; }
     if(role==='player') onData(data);
     /* khán giả: bỏ qua mọi dữ liệu gửi lên */
   });
   c.on('close', function(){
+    /* Kết nối chết trước khi hello (ICE bị chặn phía khách): KHÔNG hủy watchdog —
+       vẫn cần gợi ý cho chủ phòng khi đủ 15s. Chỉ hủy khi đã bắt tay xong. */
+    if(gotHello) clearTimeout(helloWatchdog);
     if(role==='player' && playerConn===c){ onPlayerGone(); }
     else if(role==='spectator'){ delete specConns[specKey(c)]; }
   });
@@ -842,46 +865,99 @@ function registerHost(){
   });
 }
 
-/* --- Phía khách / khán giả: kết nối + tự kết nối lại --- */
-function wantGuestRetry(){ return isSpectator || everWelcomed || !!restoredSave; }
-function scheduleGuestRetry(){
-  if(localMode || isHost) return;
-  if(!wantGuestRetry()) return;
-  if(guestRetryTimer) return;
-  if(guestAttempts>=guestMaxAttempts){
-    setStatus(isSpectator ? '⚠️ Không kết nối lại được với phòng.' : 'Không tìm thấy chủ phòng — ván đã lưu sẽ giữ trong 15 phút');
-    return;
+/* --- Phía khách / khán giả: kết nối + tự kết nối lại (có watchdog chống treo khi WebRTC/ICE bị chặn) --- */
+/* Ngân sách thử lại DÙNG CHUNG cho mọi kiểu thất bại (peer-unavailable, watchdog hết giờ, error, ICE failed):
+   - khán giả: tối đa guestMaxAttempts (10) lần thử lại;
+   - khách đã vào phòng / có save: tối đa guestMaxAttempts (40) lần thử nhanh, hoặc ~2 phút nếu mỗi lần thử chậm (ICE);
+   - khách mới vào: tối đa GUEST_FRESH_RETRIES lần thử lại, sau đó báo lỗi rõ ràng thay vì treo ở "Đang kết nối…". */
+function guestRetryExhausted(){
+  if(isSpectator) return guestAttempts>=guestMaxAttempts;
+  if(everWelcomed || restoredSave){
+    if(guestAttempts>=guestMaxAttempts) return true;
+    if(guestRetryDeadline && Date.now()>=guestRetryDeadline) return true;
+    return false;
   }
+  return guestAttempts>=GUEST_FRESH_RETRIES;
+}
+function guestGiveUp(){
+  if(isSpectator) setStatus('⚠️ Không kết nối lại được với phòng.');
+  else if(everWelcomed || restoredSave) setStatus('Không tìm thấy chủ phòng — ván đã lưu sẽ giữ trong 15 phút');
+  else if(lastFailKind==='peer-unavailable') setStatus('⚠️ Không tìm thấy phòng '+roomCode+'. Kiểm tra lại mã phòng hoặc chờ chủ phòng tạo phòng.');
+  else setStatus(BLOCKED_MSG);
+}
+function scheduleGuestRetry(silent){
+  if(localMode || isHost) return;
+  if(guestRetryTimer) return;
+  if(guestRetryExhausted()){ guestGiveUp(); return; }
+  guestAttempts++;
+  if((everWelcomed || restoredSave) && !guestRetryDeadline) guestRetryDeadline=Date.now()+120000;
+  if(!silent) setStatus('Đang thử kết nối lại… (lần '+guestAttempts+')');
   guestRetryTimer=setTimeout(function(){
     guestRetryTimer=null;
-    guestAttempts++;
     connectToHost();
   },3000);
+}
+/* Một lần thử kết nối thất bại trước khi mở được (watchdog / error / ICE failed / đóng sớm):
+   bỏ attempt đó và đi vào cùng cơ chế thử lại ở trên. */
+function guestAttemptFailed(kind){
+  if(kind) lastFailKind=kind;
+  scheduleGuestRetry(false);
 }
 function setupOutgoing(c){
   conn=c; connOpened=false;
   var mySeq=connectSeq;
+  var opened=false, dead=false, closeHandled=false, watchdog=null;
+  function teardown(){
+    try{ c.close(); }catch(e){}
+    try{ if(c.peerConnection && c.peerConnection.close) c.peerConnection.close(); }catch(e){}
+  }
+  function fail(kind){
+    if(dead || opened) return;
+    if(mySeq!==connectSeq) return; /* attempt cũ đã bị thay thế — giữ handler của nó im lặng */
+    dead=true;
+    if(watchdog){ clearTimeout(watchdog); watchdog=null; }
+    teardown();
+    if(conn===c) conn=null;
+    guestAttemptFailed(kind);
+  }
+  function onClosed(){
+    if(closeHandled) return; closeHandled=true;
+    if(conn!==c) return;
+    connected=false; hideReadyPopup();
+    if(isSpectator){ phase='waiting'; setStatus('Đang kết nối lại…'); scheduleGuestRetry(true); }
+    else if(everWelcomed){ setStatus('Mất kết nối với chủ phòng — đang thử kết nối lại…'); scheduleGuestRetry(true); }
+    else if(connOpened){ setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.'); }
+  }
   c.on('open', function(){
-    connOpened=true; guestAttempts=0;
+    if(mySeq!==connectSeq || dead) return;
+    opened=true; connOpened=true; guestAttempts=0; guestRetryDeadline=0;
+    if(watchdog){ clearTimeout(watchdog); watchdog=null; }
     sendTo(c,{type:'hello', name:myName});
   });
   c.on('data', onData);
   c.on('close', function(){
-    if(conn!==c) return;
-    connected=false; hideReadyPopup();
-    if(isSpectator){ phase='waiting'; setStatus('Đang kết nối lại…'); scheduleGuestRetry(); }
-    else if(everWelcomed){ setStatus('Mất kết nối với chủ phòng — đang thử kết nối lại…'); scheduleGuestRetry(); }
-    else if(connOpened){ setStatus('⚠️ Mất kết nối với đối thủ. Hãy tải lại trang hoặc tạo phòng mới.'); }
+    if(!opened){ fail('close'); return; }
+    onClosed();
   });
-  c.on('error', function(){});
-  setTimeout(function(){
-    if(mySeq===connectSeq && !connOpened && !everWelcomed){ scheduleGuestRetry(); }
-  },6000);
+  c.on('error', function(){
+    if(!opened){ fail('error'); return; }
+    onClosed(); /* rớt giữa ván: xử lý như đóng kết nối (luồng host-gone / reconnect như cũ) */
+  });
+  try{
+    if(c.peerConnection && c.peerConnection.addEventListener){
+      c.peerConnection.addEventListener('iceconnectionstatechange', function(){
+        if(!opened && c.peerConnection.iceConnectionState==='failed') fail('ice');
+      });
+    }
+  }catch(e){}
+  watchdog=setTimeout(function(){ fail('timeout'); },12000); /* 12s không mở được → coi như ICE bị chặn, bỏ attempt này */
 }
 function connectToHost(){
   if(!peer) return;
+  if(conn && !conn.open){ try{ conn.close(); }catch(e){} conn=null; } /* dọn attempt cũ chưa mở (vd. peer-unavailable) */
   connectSeq++;
-  setupOutgoing(peer.connect('duogames-'+roomCode, {reliable:true}));
+  try{ setupOutgoing(peer.connect('duogames-'+roomCode, {reliable:true})); }
+  catch(e){ guestAttemptFailed('error'); }
 }
 function initOnline(){
   if(!restoredSave) flipped = !isHost; /* nếu đã khôi phục ván: giữ hướng bàn theo phân vai đã lưu */
@@ -899,8 +975,8 @@ function initOnline(){
     peer.on('open', function(){ connectToHost(); });
     peer.on('error', function(err){
       if(err && err.type==='peer-unavailable'){
-        if(wantGuestRetry()){ setStatus('Đang kết nối lại với phòng…'); scheduleGuestRetry(); }
-        else setStatus('⚠️ Không tìm thấy phòng '+roomCode+'. Kiểm tra lại mã phòng hoặc chờ chủ phòng tạo phòng.');
+        lastFailKind='peer-unavailable';
+        scheduleGuestRetry(false); /* dùng chung ngân sách thử lại với watchdog ICE — hết ngân sách sẽ báo rõ ở guestGiveUp() */
       }
       else setStatus('⚠️ Lỗi kết nối: '+(err&&err.type?err.type:'không rõ')+'. Hãy tải lại trang.');
     });
