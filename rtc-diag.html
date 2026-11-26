@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTC Diag</title>
+<style>body{font-family:monospace;background:#0f172a;color:#e2e8f0;padding:16px}pre{white-space:pre-wrap;font-size:13px;line-height:1.5}</style>
+</head>
+<body>
+<h3>Chẩn đoán WebRTC / PeerJS</h3>
+<pre id="log">đang khởi tạo…</pre>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+var t0 = Date.now();
+var logEl = document.getElementById('log');
+logEl.textContent = '';
+function log(msg) {
+  var line = '[' + ((Date.now() - t0) / 1000).toFixed(1) + 's] ' + msg;
+  logEl.textContent += line + '\n';
+  document.title = msg.slice(0, 60);
+}
+var OPTS = { config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } };
+var params = new URLSearchParams(location.search);
+var role = params.get('role') || 'host';
+var room = (params.get('room') || 'DGTEST1').toUpperCase();
+var HOST_ID = 'diagtest-' + room;
+log('role=' + role + ' room=' + room);
+log('RTCPeerConnection: ' + (typeof RTCPeerConnection !== 'undefined' ? 'có' : 'KHÔNG CÓ'));
+
+function wireConn(c, isHost) {
+  log('wireConn: kết nối với peer ' + c.peer);
+  c.on('open', function () {
+    log('CONN OPEN ✔ (kênh dữ liệu đã mở)');
+    if (!isHost) { try { c.send('ping'); log('guest đã gửi ping'); } catch (e) { log('gửi ping lỗi: ' + e); } }
+  });
+  c.on('data', function (d) {
+    log('nhận data: ' + d);
+    if (isHost && d === 'ping') { try { c.send('pong'); log('host đã trả pong'); } catch (e) {} }
+    if (!isHost && d === 'pong') log('✅ THÀNH CÔNG: guest nhận pong — WebRTC thông hoàn toàn');
+  });
+  c.on('error', function (err) { log('CONN ERROR: type=' + (err && err.type) + ' msg=' + (err && err.message)); });
+  c.on('close', function () { log('CONN CLOSE'); });
+  if (c.on) c.on('iceStateChanged', function (s) { log('iceStateChanged: ' + s); });
+  try {
+    var pc = c.peerConnection;
+    if (pc) {
+      pc.addEventListener('iceconnectionstatechange', function () { log('pc.iceConnectionState: ' + pc.iceConnectionState); });
+      pc.addEventListener('connectionstatechange', function () { log('pc.connectionState: ' + pc.connectionState); });
+      pc.addEventListener('icecandidateerror', function (e) { log('icecandidateerror: ' + (e.errorText || e.code || '')); });
+    }
+  } catch (e) { log('không gắn được pc listener: ' + e); }
+}
+
+var peer;
+if (role === 'host') {
+  peer = new Peer(HOST_ID, OPTS);
+  peer.on('open', function (id) { log('HOST peer open ✔ id=' + id + ' — đã đăng ký lên PeerJS Cloud, chờ guest…'); });
+  peer.on('connection', function (c) { log('HOST nhận sự kiện connection từ ' + c.peer + ' (signaling OK, đang chờ ICE…)'); wireConn(c, true); });
+  peer.on('error', function (err) { log('HOST PEER ERROR: type=' + (err && err.type) + ' msg=' + (err && err.message)); });
+  peer.on('disconnected', function () { log('HOST peer disconnected khỏi broker'); });
+} else {
+  peer = new Peer(OPTS);
+  peer.on('open', function (id) {
+    log('GUEST peer open ✔ id=' + id + ' — bắt đầu connect tới ' + HOST_ID);
+    var c = peer.connect(HOST_ID, { reliable: true });
+    wireConn(c, false);
+  });
+  peer.on('error', function (err) { log('GUEST PEER ERROR: type=' + (err && err.type) + ' msg=' + (err && err.message)); });
+  peer.on('disconnected', function () { log('GUEST peer disconnected khỏi broker'); });
+}
+setTimeout(function () { log('⏱ hết 30s — trạng thái cuối ở trên là kết quả chẩn đoán'); }, 30000);
+</script>
+</body>
+</html>
