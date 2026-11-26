@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ tướng — DuoGames</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="relay.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.5; }
@@ -260,8 +262,8 @@ var isSpectator=false, everWelcomed=false, restoredSave=null;
 var connOpened=false, guestAttempts=0, guestMaxAttempts=40, guestRetryTimer=null, connectSeq=0, hostRegAttempts=0;
 var guestRetryDeadline=0, lastFailKind=''; /* watchdog kết nối: hạn ~2 phút cho khách có save/đã vào phòng; lastFailKind để chọn thông báo cuối */
 var GUEST_FRESH_RETRIES=5; /* khách mới vào (chưa save): thử lại tối đa 5 lần (tổng ~6 lần kết nối) rồi báo lỗi rõ ràng, không treo ở "Đang kết nối…" */
-var BLOCKED_MSG='Không kết nối được tới chủ phòng. Có thể do mạng hoặc trình duyệt đang chặn kết nối WebRTC (tường lửa, VPN, chặn UDP), hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng/trình duyệt hoặc nhờ chủ phòng tạo phòng mới.';
-var HOST_HINT_MSG='Có người đang cố vào phòng nhưng kết nối chưa thông — có thể mạng của họ chặn WebRTC. Nếu họ vẫn không vào được, hãy bảo họ thử mạng/trình duyệt khác.';
+var BLOCKED_MSG='Không kết nối được tới chủ phòng. Có thể do mạng không ổn định, máy chủ trung chuyển tạm thời không truy cập được, hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng hoặc nhờ chủ phòng tạo phòng mới.';
+var HOST_HINT_MSG='Có người đang cố vào phòng nhưng kết nối chưa thông. Nếu họ vẫn không vào được, hãy bảo họ kiểm tra lại mạng rồi thử vào lại.';
 var SAVE_KEY='duo-save-'+roomCode;
 
 var statusEl=document.getElementById('status'),
@@ -842,7 +844,7 @@ function setupIncoming(c){
   c.on('error', function(){});
 }
 function registerHost(){
-  peer=new Peer('duogames-'+roomCode, { config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } });
+  peer=new Peer('duogames-'+roomCode);
   peer.on('open', function(){
     hostRegAttempts=0;
     if(gameOver && overInfo){ setStatus(resultText()); }
@@ -966,12 +968,12 @@ function initOnline(){
   if(restoredSave) applyAssignment(); /* khôi phục: hiện lại quân của mình theo phân vai đã lưu */
   roomInfoEl.innerHTML = 'Mã phòng: <b>'+escapeHtml(roomCode)+'</b>';
   resignBtn.style.display='';
-  if(typeof Peer==='undefined'){ setStatus('⚠️ Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.'); return; }
+  if(typeof Peer==='undefined' || (window.Relay && !Relay.configured)){ setStatus('⚠️ Chưa cấu hình máy chủ trung chuyển (Firebase) — trang chưa thể chơi online. Cần điền cấu hình Firebase vào relay.js trước.'); return; }
   if(isHost){
     copyBtn.style.display='';
     registerHost();
   } else {
-    peer=new Peer({ config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } });
+    peer=new Peer();
     peer.on('open', function(){ connectToHost(); });
     peer.on('error', function(err){
       if(err && err.type==='peer-unavailable'){

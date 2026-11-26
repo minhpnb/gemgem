@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ Cá Ngựa — DuoGames</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="relay.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.5; }
@@ -227,7 +229,7 @@
   var SPIN_MS = 1100;
   var OBSERVE_MS = 1000;
   var ROLL_WINDOW_MS = SPIN_MS + OBSERVE_MS; // 2100ms kể từ lúc có kết quả đổ
-  var PEER_OPTS = { config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } };
+  /* Kết nối qua relay.js (Firebase RTDB) — không còn cấu hình STUN/TURN */
 
   var params = new URLSearchParams(location.search);
   var roomCode = (params.get('room') || '').toUpperCase();
@@ -1293,7 +1295,7 @@
       c._closed = true;
       try { c.close(); } catch (e) { /* bỏ qua */ }
       if (!G) {
-        setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông — có thể mạng của họ chặn WebRTC.', 'Nếu họ vẫn không vào được, hãy bảo họ thử mạng/trình duyệt khác.');
+        setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông.', 'Nếu họ vẫn không vào được, hãy bảo họ kiểm tra lại mạng rồi thử vào lại.');
       }
     }, 15000);
     c.on('data', function (data) { hostHandleData(c, data); });
@@ -1302,7 +1304,7 @@
   }
 
   function registerHost() {
-    peer = new Peer('duogames-' + roomCode, PEER_OPTS);
+    peer = new Peer('duogames-' + roomCode);
     peer.on('open', function () {
       setStatus('Đang chờ người chơi vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Vào sảnh chờ và cùng bấm Sẵn sàng để bắt đầu.');
     });
@@ -1323,7 +1325,7 @@
     if (everInGame) {
       setStatus('Không kết nối lại được với chủ phòng.', 'Ván đấu có thể vẫn đang chờ bạn — hãy thử tải lại trang để vào lại phòng.');
     } else {
-      setStatus('Không kết nối được tới chủ phòng.', 'Có thể do mạng hoặc trình duyệt đang chặn kết nối WebRTC (tường lửa, VPN, chặn UDP), hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng/trình duyệt hoặc nhờ chủ phòng tạo phòng mới.');
+      setStatus('Không kết nối được tới chủ phòng.', 'Có thể do mạng không ổn định, máy chủ trung chuyển tạm thời không truy cập được, hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng hoặc nhờ chủ phòng tạo phòng mới.');
     }
   }
 
@@ -1384,7 +1386,7 @@
       connectAttempt++;
       if (conn === c) conn = null;
       try { c.close(); } catch (e) { /* bỏ qua */ }
-      scheduleGuestRetry('Kết nối tới chủ phòng chưa thông — có thể mạng đang chặn WebRTC, đang thử lại…');
+      scheduleGuestRetry('Kết nối tới chủ phòng chưa thông — đang thử lại…');
     }
     function onGone() {
       if (goneHandled || att !== connectAttempt) return;
@@ -1499,8 +1501,8 @@
   function startOnline() {
     roomInfoEl.classList.remove('hidden');
     roomCodeText.textContent = roomCode;
-    if (typeof Peer === 'undefined') {
-      setStatus('Không tải được thư viện kết nối (PeerJS).', 'Kiểm tra mạng rồi tải lại trang.');
+    if (typeof Peer === 'undefined' || (window.Relay && !Relay.configured)) {
+      setStatus('Chưa cấu hình máy chủ trung chuyển (Firebase).', 'Trang chưa thể chơi online — cần điền cấu hình Firebase vào relay.js trước.');
       return;
     }
     if (isHost) {
@@ -1515,7 +1517,7 @@
       shareText.textContent = 'Bạn đang vào phòng với tư cách khách.';
       btnCopy.classList.add('hidden');
       setStatus('Đang kết nối tới phòng…', 'Vui lòng chờ chủ phòng sẵn sàng.');
-      peer = new Peer(PEER_OPTS);
+      peer = new Peer();
       peer.on('open', function () { connectToHost(); });
       peer.on('error', function (err) {
         if (err && err.type === 'peer-unavailable') {

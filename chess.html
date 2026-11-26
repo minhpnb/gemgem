@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ vua — DuoGames</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="relay.js"></script>
 <style>
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.5; }
@@ -802,7 +804,7 @@ document.getElementById('btnReady').addEventListener('click', () => {
   checkBothReady();
 });
 
-/* ================== Mạng PeerJS ================== */
+/* ================== Mạng (Firebase relay — xem relay.js) ================== */
 let isSpectator = false, specLive = false;
 let playerConn = null, playerGone = false;
 const spectators = new Set();
@@ -812,9 +814,9 @@ let guestConnected = false, wasPlayer = false, guestReload = false;
 let guestRetries = 0, guestRetryTimer = null, hostRegRetries = 0;
 let tearingDown = false;
 let guestAttempt = 0;              // số thứ tự lần thử kết nối của khách — handler thuộc lần thử cũ sẽ bị vô hiệu hóa
-const OPEN_TIMEOUT_MS = 12000;     // quá 12s mà kết nối chưa 'open' thì coi như ICE/WebRTC bị chặn
+const OPEN_TIMEOUT_MS = 12000;     // quá 12s mà kết nối chưa 'open' thì coi như kết nối trung chuyển thất bại
 const FRESH_JOIN_CAP = 6;          // khách vào mới (không có bản lưu): tối đa ~6 lần thử rồi báo lỗi rõ ràng
-const ICE_BLOCKED_MSG = 'Không kết nối được tới chủ phòng. Có thể do mạng hoặc trình duyệt đang chặn kết nối WebRTC (tường lửa, VPN, chặn UDP), hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng/trình duyệt hoặc nhờ chủ phòng tạo phòng mới.';
+const ICE_BLOCKED_MSG = 'Không kết nối được tới chủ phòng. Có thể do mạng không ổn định, máy chủ trung chuyển tạm thời không truy cập được, hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng hoặc nhờ chủ phòng tạo phòng mới.';
 
 /* ================== Lưu tiến trình (localStorage, giữ 15 phút) ================== */
 function saveKey() { return 'duo-save-' + CODE; }
@@ -1135,7 +1137,7 @@ function scheduleGuestRetry() {
 
 function connectToHost() {
   tearingDown = false;
-  peer = new Peer({ config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } });
+  peer = new Peer();
   peer.on('open', () => {
     conn = peer.connect('duogames-' + CODE, { reliable: true });
     guestAttempt++;
@@ -1164,7 +1166,7 @@ function wireHostConn(c) {
     if (helloSeen || c.open) return;
     try { c.close(); } catch (e) {}
     if (!playerConn || playerGone) {
-      setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông — có thể mạng của họ chặn WebRTC. Nếu họ vẫn không vào được, hãy bảo họ thử mạng/trình duyệt khác.');
+      setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông. Nếu họ vẫn không vào được, hãy bảo họ kiểm tra lại mạng rồi thử vào lại.');
     }
   }, 15000);
   c.on('data', d => {
@@ -1234,7 +1236,7 @@ function wireHostConn(c) {
 }
 
 function registerHost() {
-  peer = new Peer('duogames-' + CODE, { config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } });
+  peer = new Peer('duogames-' + CODE);
   peer.on('open', () => {
     if (restoredPhase === 'playing') {
       setConn('🟢 Đã khôi phục phòng • Mã phòng: ' + CODE + colorSuffix());
@@ -1283,8 +1285,8 @@ function initNetwork() {
   }
   document.getElementById('inviteBox').style.display = 'block';
   document.getElementById('inviteLink').value = shareLink();
-  if (typeof Peer === 'undefined') {
-    setStatus('⚠️ Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.');
+  if (typeof Peer === 'undefined' || (window.Relay && !Relay.configured)) {
+    setStatus('⚠️ Chưa cấu hình máy chủ trung chuyển (Firebase) — trang chưa thể chơi online. Cần điền cấu hình Firebase vào relay.js trước.');
     return;
   }
   if (IS_HOST) {
