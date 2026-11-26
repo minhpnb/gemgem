@@ -66,7 +66,7 @@
 <body>
 <main>
   <h1>🐎 Cờ Cá Ngựa</h1>
-  <p class="sub">2–4 người chơi. Đổ 6 để ra quân, đá ngựa đối thủ về chuồng (trừ ô xuất phát an toàn), đưa cả 4 ngựa về đích trước để thắng.</p>
+  <p class="sub">2–4 người chơi. Màu ngựa được bốc thăm mỗi ván (2 người chơi luôn ngồi đối diện nhau). Đổ 6 để ra quân, đá ngựa đối thủ về chuồng — kể cả ở ô xuất phát; mỗi ô chỉ chứa 1 ngựa và không được nhảy qua ngựa đứng trước. Đưa cả 4 ngựa về đích trước để thắng.</p>
 
   <!-- Màn hình thiết lập khi mở trực tiếp không có tham số -->
   <div id="setup" class="panel hidden">
@@ -173,7 +173,7 @@
   var SEAT_COLORS = ['#ef4444', '#3b82f6', '#eab308', '#22c55e'];
   var SEAT_NAMES = ['Đỏ', 'Xanh dương', 'Vàng', 'Xanh lá'];
   var START_OFFSET = [0, 13, 26, 39];
-  var SAFE = { 0: true, 13: true, 26: true, 39: true }; // các ô xuất phát: an toàn, không bị đá
+  // Không còn ô an toàn: đá được ở mọi ô trên vòng chính, kể cả 4 ô xuất phát.
   // Vòng chính 52 ô (tọa độ [hàng, cột] trên lưới 15×15), đi theo chiều kim đồng hồ từ ô xuất phát của Đỏ.
   var RING = [
     [6,1],[6,2],[6,3],[6,4],[6,5],[5,6],[4,6],[3,6],[2,6],[1,6],[0,6],[0,7],[0,8],
@@ -250,9 +250,9 @@
   // ================= Trạng thái =================
   var cells = [];            // cells[r][c]: phần tử DOM của ô
   var G = null;              // trạng thái ván đấu (host/local là chuẩn; khách là bản nhận từ host)
-  var mySeat = null;         // ghế của người mở trang (online); null = khán giả / chưa phân
+  var myPid = null;          // mã người chơi (thứ tự vào phòng) của trang này (online); null = khán giả / chưa phân. MÀU cầm mỗi ván nằm ở lobbyPlayers[].color / G.assign
   var isSpectator = false;
-  var lobbyPlayers = [];     // [{seat,name,color,wins,ready,connected}] — bản mới nhất
+  var lobbyPlayers = [];     // [{pid,name,color,wins,ready,connected}] — bản mới nhất; color = màu đang cầm (null = chưa bốc thăm)
   var peer = null, conn = null; // conn: kết nối của khách tới host (phía khách)
   var connected = false;     // phía khách: đã bắt tay xong với host chưa
   var everInGame = false;    // phía khách: đã từng vào ván (để giữ ngân sách thử lại ~2 phút)
@@ -273,9 +273,11 @@
   var animTimers = [];            // các hẹn giờ của animation đang chạy
   var tokenEls = {};              // "seat:horse" -> phần tử token đang hiển thị (để làm hiệu ứng bay)
 
-  // Phía host: sổ ghế — seats[s] = null | {conn, name, connected, ready, wins}
+  // Phía host: sổ NGƯỜI CHƠI theo thứ tự vào phòng (pid) — seats[pid] = null |
+  // {conn, name, connected, ready, wins, color}. wins/name thuộc về NGƯỜI CHƠI;
+  // color là màu bốc thăm của ván hiện tại (đổi mỗi ván).
   var seats = [null, null, null, null];
-  var lastStartSeat = null;  // người đi trước của ván trước (để luân phiên ván sau)
+  var lastStartColor = null;  // MÀU đi trước của ván trước (để luân phiên ván sau)
   var gamesStarted = 0;
 
   // Tên hiển thị (hồ sơ lưu vĩnh viễn trong localStorage, key 'duo-profile')
@@ -346,19 +348,49 @@
     }
   }
 
-  // Tên hiển thị của một ghế theo góc nhìn của trang này
-  function seatDisplayName(seat) {
-    if (isLocal) return SEAT_NAMES[seat];
+  // Tên của một NGƯỜI CHƠI (theo pid) theo dữ liệu sảnh mới nhất
+  function playerNameByPid(pid) {
     for (var i = 0; i < lobbyPlayers.length; i++) {
-      if (lobbyPlayers[i].seat === seat && lobbyPlayers[i].name) return lobbyPlayers[i].name;
+      if (lobbyPlayers[i].pid === pid && lobbyPlayers[i].name) return lobbyPlayers[i].name;
     }
-    if (seat === mySeat && myName) return myName;
-    return 'Người chơi ' + (seat + 1);
+    if (pid === myPid && myName) return myName;
+    return 'Người chơi ' + (pid + 1);
   }
 
-  function seatConnected(seat) {
+  // pid của người đang cầm MÀU `color` trong ván hiện tại (-1 nếu không rõ)
+  function pidOfColor(color) {
+    if (G && G.assign && typeof G.assign[color] === 'number') return G.assign[color];
     for (var i = 0; i < lobbyPlayers.length; i++) {
-      if (lobbyPlayers[i].seat === seat) return !!lobbyPlayers[i].connected;
+      if (lobbyPlayers[i].color === color) return lobbyPlayers[i].pid;
+    }
+    return -1;
+  }
+
+  // MÀU mà trang này đang cầm ở ván hiện tại (online); null nếu chưa bốc thăm / khán giả / local
+  function myColor() {
+    if (isLocal || myPid === null) return null;
+    for (var i = 0; i < lobbyPlayers.length; i++) {
+      if (lobbyPlayers[i].pid === myPid) {
+        return typeof lobbyPlayers[i].color === 'number' ? lobbyPlayers[i].color : null;
+      }
+    }
+    return null;
+  }
+
+  // Tên hiển thị của người cầm MÀU `seat` (tham số là màu) theo góc nhìn của trang này
+  function seatDisplayName(seat) {
+    var pid = pidOfColor(seat);
+    if (pid >= 0) return playerNameByPid(pid);
+    return SEAT_NAMES[seat];
+  }
+
+  // Người cầm MÀU `seat` còn kết nối không?
+  function seatConnected(seat) {
+    var pid = pidOfColor(seat);
+    if (pid >= 0) {
+      for (var i = 0; i < lobbyPlayers.length; i++) {
+        if (lobbyPlayers[i].pid === pid) return !!lobbyPlayers[i].connected;
+      }
     }
     return true; // local hoặc chưa có dữ liệu sảnh: coi như đang có mặt
   }
@@ -377,14 +409,53 @@
     return FINISH_CELL[seat];
   }
 
-  // Các ngựa có thể đi với giá trị xúc xắc cho trước.
+  // Khóa ô trên bàn cho progress 0..55: vòng chính dùng chỉ số tuyệt đối 0..51,
+  // cột về đích là ô riêng của từng màu. Progress 56 (đích) không chiếm ô.
+  function cellKey(seat, progress) {
+    if (progress <= 50) return 'R' + absIndex(seat, progress);
+    return 'H' + seat + ':' + progress;
+  }
+
+  // Các ngựa có thể đi với giá trị xúc xắc cho trước — LUẬT MỚI:
+  // - Mỗi ô chỉ chứa đúng 1 ngựa: mọi ô trung gian trên đường đi phải TRỐNG
+  //   (không nhảy qua bất kỳ ngựa nào, của mình hay đối thủ).
+  // - Ô đích phải trống, hoặc có đúng 1 ngựa ĐỐI THỦ (hạ cánh = đá về chuồng);
+  //   hạ cánh lên ngựa của mình là phạm luật. Ô đích 56 (về đích) luôn hợp lệ nếu tới được.
+  // - Ra quân (progress -1 → 0, cần đổ 6): ô xuất có ngựa của mình thì không ra được;
+  //   có ngựa đối thủ thì ra quân và đá luôn.
+  // Hàm dùng chung cho tô sáng, bấm chọn, tự qua lượt và kiểm tra phía host.
   function legalMoves(horses, seat, dice) {
+    var occ = {}; // cellKey -> seat của ngựa đang chiếm ô
+    var s2, j, q;
+    for (s2 = 0; s2 < 4; s2++) {
+      for (j = 0; j < 4; j++) {
+        q = horses[s2][j];
+        if (q >= 0 && q <= 55) occ[cellKey(s2, q)] = s2;
+      }
+    }
     var res = [];
     var hs = horses[seat];
     for (var i = 0; i < 4; i++) {
       var p = hs[i];
-      if (p === -1) { if (dice === 6) res.push(i); }
-      else if (p + dice <= 56) res.push(i);
+      if (p === -1) {
+        if (dice !== 6) continue;
+        var o = occ['R' + START_OFFSET[seat]];
+        if (typeof o === 'number' && o === seat) continue; // ô xuất đã có ngựa của mình
+        res.push(i);
+        continue;
+      }
+      var t = p + dice;
+      if (t > 56) continue;
+      var blocked = false;
+      for (var step = p + 1; step < t; step++) {
+        if (typeof occ[cellKey(seat, step)] === 'number') { blocked = true; break; }
+      }
+      if (blocked) continue;
+      if (t <= 55) {
+        var occSeat = occ[cellKey(seat, t)];
+        if (typeof occSeat === 'number' && occSeat === seat) continue; // đích có ngựa của mình
+      }
+      res.push(i);
     }
     return res;
   }
@@ -399,16 +470,15 @@
     hs[horseIdx] = np;
     if (np >= 0 && np <= 50) {
       var abs = absIndex(seat, np);
-      if (!SAFE[abs]) {
-        // Đá: mọi ngựa đối thủ đang đứng cùng ô vòng chính đều về chuồng
-        for (var s2 = 0; s2 < 4; s2++) {
-          if (s2 === seat || state.players.indexOf(s2) === -1) continue;
-          for (var j = 0; j < 4; j++) {
-            var q = state.horses[s2][j];
-            if (q >= 0 && q <= 50 && absIndex(s2, q) === abs) {
-              state.horses[s2][j] = -1;
-              events.push({ type: 'kick', by: seat, victim: s2, horse: j, from: q });
-            }
+      // Đá: ngựa đối thủ đang đứng cùng ô vòng chính về chuồng — ở MỌI ô,
+      // kể cả ô xuất phát (không còn ô an toàn). Kể cả khi vừa ra quân (np = 0).
+      for (var s2 = 0; s2 < 4; s2++) {
+        if (s2 === seat || state.players.indexOf(s2) === -1) continue;
+        for (var j = 0; j < 4; j++) {
+          var q = state.horses[s2][j];
+          if (q >= 0 && q <= 50 && absIndex(s2, q) === abs) {
+            state.horses[s2][j] = -1;
+            events.push({ type: 'kick', by: seat, victim: s2, horse: j, from: q });
           }
         }
       }
@@ -424,11 +494,11 @@
     return events;
   }
 
-  function newGameState(players, startSeat, token) {
+  function newGameState(players, startSeat, token, assign) {
     var horses = [];
     for (var s = 0; s < 4; s++) horses.push([-1, -1, -1, -1]);
     return {
-      players: players.slice(),
+      players: players.slice(), // các MÀU tham gia ván, xếp tăng dần (thứ tự lượt đi)
       horses: horses,
       turn: startSeat,
       dice: null,
@@ -436,8 +506,38 @@
       phase: 'playing',
       winner: null,
       startSeat: startSeat,
-      token: token
+      token: token,
+      assign: assign || [-1, -1, -1, -1] // assign[màu] = mã người chơi (pid) cầm màu đó ván này
     };
+  }
+
+  function shuffleArr(a) {
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  // Bốc thăm MÀU cho một ván mới (host bốc, phát kèm state; local bốc tại máy).
+  // pids: danh sách mã người chơi tham gia. Trả về {pid: màu}.
+  // - 2 người: bắt buộc hai màu ĐỐI DIỆN nhau (cặp 0–2 Đỏ–Vàng hoặc 1–3 Xanh dương–Xanh lá),
+  //   bốc ngẫu nhiên cả cặp lẫn ai cầm màu nào → công bằng đường đua.
+  // - 3 người: bốc ngẫu nhiên 3 trong 4 màu rồi xáo trộn gán cho 3 người.
+  // - 4 người: xáo trộn cả 4 màu gán cho 4 người.
+  function drawColors(pids) {
+    var draw = {};
+    var i;
+    if (pids.length === 2) {
+      var pair = Math.random() < 0.5 ? [0, 2] : [1, 3];
+      shuffleArr(pair);
+      draw[pids[0]] = pair[0];
+      draw[pids[1]] = pair[1];
+      return draw;
+    }
+    var colours = shuffleArr([0, 1, 2, 3]).slice(0, pids.length);
+    for (i = 0; i < pids.length; i++) draw[pids[i]] = colours[i];
+    return draw;
   }
 
   function genToken() {
@@ -502,7 +602,9 @@
   function activeSeats() {
     if (G && G.phase !== 'lobby') return G.players;
     var res = [];
-    for (var i = 0; i < lobbyPlayers.length; i++) res.push(lobbyPlayers[i].seat);
+    for (var i = 0; i < lobbyPlayers.length; i++) {
+      if (typeof lobbyPlayers[i].color === 'number') res.push(lobbyPlayers[i].color);
+    }
     return res;
   }
 
@@ -568,7 +670,8 @@
   function canAct() {
     if (!G || G.phase !== 'playing') return false;
     if (isLocal) return true;
-    return online && !isSpectator && mySeat !== null && G.turn === mySeat;
+    var mc = myColor();
+    return online && !isSpectator && mc !== null && G.turn === mc;
   }
 
   // ================= Xúc xắc 3D + cửa sổ quan sát =================
@@ -773,13 +876,17 @@
     lobbyPlayers.forEach(function (p) {
       var tr = document.createElement('tr');
       var tdName = document.createElement('td');
-      tdName.textContent = p.name || ('Người chơi ' + (p.seat + 1));
+      tdName.textContent = p.name || ('Người chơi ' + (p.pid + 1));
       var tdColor = document.createElement('td');
-      var dot = document.createElement('span');
-      dot.className = 'dot';
-      dot.style.background = SEAT_COLORS[p.seat];
-      tdColor.appendChild(dot);
-      tdColor.appendChild(document.createTextNode(SEAT_NAMES[p.seat]));
+      if (typeof p.color === 'number') {
+        var dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = SEAT_COLORS[p.color];
+        tdColor.appendChild(dot);
+        tdColor.appendChild(document.createTextNode(SEAT_NAMES[p.color]));
+      } else {
+        tdColor.appendChild(document.createTextNode('Ngẫu nhiên'));
+      }
       var tdWins = document.createElement('td');
       tdWins.textContent = String(p.wins || 0);
       var tdState = document.createElement('td');
@@ -794,7 +901,7 @@
       : ('Đang có ' + connCount + ' người, ' + readyCount + ' đã sẵn sàng. Ván bắt đầu khi tất cả đều sẵn sàng.');
     // Nút sẵn sàng của chính mình (bấm lại để huỷ)
     var mine = null;
-    lobbyPlayers.forEach(function (p) { if (p.seat === mySeat) mine = p; });
+    lobbyPlayers.forEach(function (p) { if (p.pid === myPid) mine = p; });
     if (mine) {
       btnLobbyReady.disabled = false;
       btnLobbyReady.textContent = mine.ready ? 'Đã sẵn sàng ✓ (bấm để huỷ)' : '✅ Sẵn sàng';
@@ -804,7 +911,7 @@
       btnLobbyReady.textContent = '✅ Sẵn sàng';
     }
     // Hiện/ẩn sảnh: chỉ người chơi online ở giai đoạn lobby mới thấy
-    var showLobby = online && !isSpectator && mySeat !== null && (!G || G.phase === 'lobby');
+    var showLobby = online && !isSpectator && myPid !== null && (!G || G.phase === 'lobby');
     lobbyOverlay.classList.toggle('hidden', !showLobby);
   }
 
@@ -813,8 +920,9 @@
     renderDice();
     renderLobby();
     renderStatus(events);
-    if (online && !isSpectator && mySeat !== null) {
-      youAreEl.textContent = 'Bạn: ' + (myName || 'Người chơi ' + (mySeat + 1)) + ' — quân ' + SEAT_NAMES[mySeat];
+    if (online && !isSpectator && myPid !== null) {
+      var mc = myColor();
+      youAreEl.textContent = 'Bạn: ' + (myName || 'Người chơi ' + (myPid + 1)) + (mc !== null ? ' — quân ' + SEAT_NAMES[mc] : ' — màu sẽ bốc thăm khi bắt đầu ván');
     } else if (isSpectator) {
       youAreEl.textContent = 'Bạn đang xem ván này';
     } else if (isLocal) {
@@ -923,12 +1031,15 @@
   }
 
   function onGameOver(winnerSeat) {
+    // winnerSeat là MÀU thắng; điểm thắng cộng cho NGƯỜI CHƠI cầm màu đó (theo pid),
+    // nên qua ván sau bốc thăm lại màu thì số thắng vẫn đi theo người.
+    var pid = (G && G.assign && typeof G.assign[winnerSeat] === 'number') ? G.assign[winnerSeat] : winnerSeat;
     if (isLocal) {
-      localWins[winnerSeat] = (localWins[winnerSeat] || 0) + 1;
+      localWins[pid] = (localWins[pid] || 0) + 1;
       return;
     }
-    if (online && isHost && seats[winnerSeat]) {
-      seats[winnerSeat].wins = (seats[winnerSeat].wins || 0) + 1;
+    if (online && isHost && seats[pid]) {
+      seats[pid].wins = (seats[pid].wins || 0) + 1;
     }
   }
 
@@ -939,9 +1050,9 @@
     if (animLock) return; // đang chiếu animation di chuyển: chưa đổ tiếp được
     if (!G || G.phase !== 'playing' || G.dice != null) return;
     if (isAuthority) {
-      if (online && G.turn !== mySeat) return; // host chỉ đổ cho lượt của chính mình
+      if (online && G.turn !== myColor()) return; // host chỉ đổ cho lượt của chính mình
       doRoll();
-    } else if (!isSpectator && mySeat !== null && G.turn === mySeat && connected) {
+    } else if (!isSpectator && myPid !== null && G.turn === myColor() && connected) {
       sendTo(conn, { type: 'roll' });
     }
   }
@@ -952,9 +1063,9 @@
     if (!G || G.phase !== 'playing' || G.dice == null) return;
     if (rollWindowOpen()) return; // chưa hết cửa sổ quan sát: không gửi yêu cầu đi ngựa
     if (isAuthority) {
-      if (online && G.turn !== mySeat) return;
+      if (online && G.turn !== myColor()) return;
       doMove(G.turn, horse);
-    } else if (!isSpectator && mySeat !== null && G.turn === mySeat && connected) {
+    } else if (!isSpectator && myPid !== null && G.turn === myColor() && connected) {
       sendTo(conn, { type: 'move', horse: horse });
     }
   }
@@ -965,9 +1076,9 @@
     for (var s = 0; s < 4; s++) {
       if (!seats[s]) continue;
       players.push({
-        seat: s,
+        pid: s,
         name: seats[s].name || '',
-        color: SEAT_NAMES[s],
+        color: typeof seats[s].color === 'number' ? seats[s].color : null,
         wins: seats[s].wins || 0,
         ready: !!seats[s].ready,
         connected: !!seats[s].connected
@@ -1007,22 +1118,32 @@
     startGame(present);
   }
 
+  // Bắt đầu ván: bốc thăm MÀU mới cho mọi người chơi có mặt (mỗi ván bốc lại).
+  // present: danh sách pid đang kết nối. Thứ tự lượt đi theo thứ tự MÀU tăng dần.
   function startGame(present) {
+    var draw = drawColors(present);
+    var s, i;
+    for (s = 0; s < 4; s++) {
+      if (seats[s] && typeof draw[s] === 'number') seats[s].color = draw[s];
+    }
+    var colours = present.map(function (pid) { return draw[pid]; }).sort(function (a, b) { return a - b; });
+    var assign = [-1, -1, -1, -1];
+    present.forEach(function (pid) { assign[draw[pid]] = pid; });
     var starter;
-    if (gamesStarted === 0 || lastStartSeat === null) {
-      starter = present[Math.floor(Math.random() * present.length)]; // ván đầu: bốc thăm
+    if (gamesStarted === 0 || lastStartColor === null) {
+      starter = colours[Math.floor(Math.random() * colours.length)]; // ván đầu: bốc thăm trong các màu tham gia
     } else {
-      // Ván sau: luân phiên — người tiếp theo sau người đi trước của ván trước
-      starter = present[0];
-      for (var i = 0; i < present.length; i++) {
-        if (present[i] > lastStartSeat) { starter = present[i]; break; }
+      // Ván sau: luân phiên — màu tiếp theo (trong các màu tham gia) sau màu đi trước của ván trước
+      starter = colours[0];
+      for (i = 0; i < colours.length; i++) {
+        if (colours[i] > lastStartColor) { starter = colours[i]; break; }
       }
     }
-    lastStartSeat = starter;
+    lastStartColor = starter;
     gamesStarted++;
     var token = genToken();
-    G = newGameState(present, starter, token);
-    for (var s = 0; s < 4; s++) if (seats[s]) seats[s].ready = false;
+    G = newGameState(colours, starter, token, assign);
+    for (s = 0; s < 4; s++) if (seats[s]) seats[s].ready = false;
     broadcastAll({ type: 'start', startSeat: starter, token: token, state: G });
     broadcastLobby();
     renderAll([{ type: 'start', seat: starter }]);
@@ -1090,7 +1211,7 @@
     }
     var rec = seats[seat];
     if (!rec) {
-      rec = seats[seat] = { conn: null, name: '', connected: false, ready: false, wins: 0 };
+      rec = seats[seat] = { conn: null, name: '', connected: false, ready: false, wins: 0, color: null };
     }
     if (rec.conn && rec.conn !== c) { try { rec.conn.close(); } catch (e) { /* bỏ qua */ } }
     rec.conn = c;
@@ -1117,7 +1238,7 @@
       return;
     }
     if (c._role !== 'player') return; // khán giả chỉ gửi hello
-    var seat = c._seat;
+    var seat = c._seat; // đây là pid (định danh người chơi); lượt đi G.turn là MÀU
     if (data.type === 'ready') {
       if (seats[seat] && (!G || G.phase === 'lobby')) {
         seats[seat].ready = !!data.ready;
@@ -1125,9 +1246,9 @@
         checkStart();
       }
     } else if (data.type === 'roll') {
-      if (G && G.phase === 'playing' && seat === G.turn) doRoll();
+      if (G && G.phase === 'playing' && seats[seat] && seats[seat].color === G.turn) doRoll();
     } else if (data.type === 'move') {
-      if (G && G.phase === 'playing' && seat === G.turn) doMove(seat, data.horse | 0);
+      if (G && G.phase === 'playing' && seats[seat] && seats[seat].color === G.turn) doMove(G.turn, data.horse | 0);
     } else if (data.type === 'rematch') {
       if (G && G.phase === 'over') backToLobby();
     } else if (data.type === 'name') {
@@ -1327,11 +1448,11 @@
       connected = true;
       if (data.as === 'spectator') {
         isSpectator = true;
-        mySeat = null;
+        myPid = null;
         setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ ván đấu…');
       } else {
         isSpectator = false;
-        mySeat = data.seat;
+        myPid = data.seat; // server gửi về pid (định danh người chơi theo thứ tự vào phòng)
         if (data.lobby) applyLobby(data.lobby);
         if (myName) sendTo(conn, { type: 'name', name: myName }); // hội tụ tên mới nhất cho host
         if (!G) setStatus('Đã vào phòng!', 'Vào sảnh chờ và bấm Sẵn sàng cùng mọi người để bắt đầu.');
@@ -1383,8 +1504,8 @@
       return;
     }
     if (isHost) {
-      seats[0] = { conn: null, name: myName, connected: true, ready: false, wins: 0 };
-      mySeat = 0;
+      seats[0] = { conn: null, name: myName, connected: true, ready: false, wins: 0, color: null };
+      myPid = 0;
       lobbyPlayers = lobbyPayload().players;
       shareText.textContent = 'Gửi link mời này cho bạn bè để họ vào phòng:';
       setStatus('Đang chờ người chơi vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên để bạn bè vào phòng.');
@@ -1420,23 +1541,28 @@
 
   // ================= Chế độ cùng máy (local) =================
   function startLocalGame() {
-    var players = [];
-    for (var s = 0; s < localPlayerCount; s++) players.push(s);
+    var pids = [];
+    for (var s = 0; s < localPlayerCount; s++) pids.push(s);
+    // Bốc thăm màu như bản online: 2 người luôn đối diện, 3–4 người xáo trộn ngẫu nhiên
+    var draw = drawColors(pids);
+    var colours = pids.map(function (pid) { return draw[pid]; }).sort(function (a, b) { return a - b; });
+    var assign = [-1, -1, -1, -1];
+    pids.forEach(function (pid) { assign[draw[pid]] = pid; });
     var starter;
-    if (gamesStarted === 0 || lastStartSeat === null) {
-      starter = players[Math.floor(Math.random() * players.length)];
+    if (gamesStarted === 0 || lastStartColor === null) {
+      starter = colours[Math.floor(Math.random() * colours.length)];
     } else {
-      starter = players[0];
-      for (var i = 0; i < players.length; i++) {
-        if (players[i] > lastStartSeat) { starter = players[i]; break; }
+      starter = colours[0];
+      for (var i = 0; i < colours.length; i++) {
+        if (colours[i] > lastStartColor) { starter = colours[i]; break; }
       }
     }
-    lastStartSeat = starter;
+    lastStartColor = starter;
     gamesStarted++;
-    lobbyPlayers = players.map(function (s) {
-      return { seat: s, name: SEAT_NAMES[s], color: SEAT_NAMES[s], wins: localWins[s] || 0, ready: true, connected: true };
+    lobbyPlayers = pids.map(function (pid) {
+      return { pid: pid, name: 'Người chơi ' + (pid + 1), color: draw[pid], wins: localWins[pid] || 0, ready: true, connected: true };
     });
-    G = newGameState(players, starter, genToken());
+    G = newGameState(colours, starter, genToken(), assign);
     localSetupEl.classList.add('hidden');
     renderAll([{ type: 'start', seat: starter }]);
   }
@@ -1445,13 +1571,13 @@
   btnRoll.addEventListener('click', function () { requestRoll(); });
 
   btnLobbyReady.addEventListener('click', function () {
-    if (isSpectator || mySeat === null) return;
+    if (isSpectator || myPid === null) return;
     var mine = null;
-    lobbyPlayers.forEach(function (p) { if (p.seat === mySeat) mine = p; });
+    lobbyPlayers.forEach(function (p) { if (p.pid === myPid) mine = p; });
     var next = !(mine && mine.ready);
     if (isAuthority && online) {
-      if (seats[mySeat]) {
-        seats[mySeat].ready = next;
+      if (seats[myPid]) {
+        seats[myPid].ready = next;
         broadcastLobby();
         checkStart();
       }
@@ -1552,9 +1678,13 @@
   // Phơi bày cho harness kiểm thử (không ảnh hưởng gameplay)
   window.NGUA_DEBUG = {
     RING: RING, HOME: HOME, FINISH_CELL: FINISH_CELL, STABLE_SLOTS: STABLE_SLOTS,
-    START_OFFSET: START_OFFSET, SAFE: SAFE,
-    absIndex: absIndex, cellOf: cellOf, legalMoves: legalMoves, applyMove: applyMove,
-    newGameState: newGameState,
+    START_OFFSET: START_OFFSET,
+    absIndex: absIndex, cellOf: cellOf, cellKey: cellKey, legalMoves: legalMoves, applyMove: applyMove,
+    newGameState: newGameState, drawColors: drawColors,
+    getSeats: function () { return seats; },
+    getLocalWins: function () { return localWins; },
+    doRoll: doRoll, doMove: doMove, startGame: startGame, backToLobby: backToLobby,
+    pidOfColor: pidOfColor, myColor: myColor,
     DICE_SHOW: DICE_SHOW, DICE_FACE_TRANSFORM: DICE_FACE_TRANSFORM, DICE_PIPS: DICE_PIPS,
     SPIN_MS: SPIN_MS, OBSERVE_MS: OBSERVE_MS, ROLL_WINDOW_MS: ROLL_WINDOW_MS,
     rollWindowOpen: rollWindowOpen,
@@ -1565,7 +1695,8 @@
     getAnimLock: function () { return animLock; },
     STEP_MS: STEP_MS, KICK_FLY_MS: KICK_FLY_MS,
     getLobby: function () { return lobbyPlayers; },
-    getMySeat: function () { return mySeat; },
+    getMySeat: function () { return myPid; },
+    getMyPid: function () { return myPid; },
     isSpectator: function () { return isSpectator; }
   };
 })();
