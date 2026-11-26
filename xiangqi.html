@@ -15,6 +15,7 @@
   #status { font-size: 1rem; text-align: center; min-height: 1.5em; }
   #roomInfo { text-align: center; color: #94a3b8; font-size: .9rem; margin-top: 6px; word-break: break-all; }
   #roomInfo b { color: #38bdf8; font-size: 1.05rem; letter-spacing: 1px; }
+  #scoreLine { text-align: center; color: #fbbf24; font-weight: 700; font-size: 1.02rem; margin-top: 6px; min-height: 1.4em; }
   .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
   button, a.btn { display: inline-block; padding: 9px 15px; background: #38bdf8; color: #082f49; border: none; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: .95rem; cursor: pointer; font-family: inherit; }
   button.secondary, a.btn.secondary { background: #334155; color: #e2e8f0; }
@@ -53,6 +54,7 @@
   <div class="panel">
     <div id="status">Đang khởi tạo…</div>
     <div id="roomInfo"></div>
+    <div id="scoreLine"></div>
     <div class="btns">
       <button id="copyBtn" class="secondary" style="display:none">Sao chép link mời</button>
       <button id="restartBtn">Ván mới</button>
@@ -231,6 +233,11 @@ var peer=null, conn=null, connected=false;
 var phase = localMode ? 'playing' : 'waiting'; /* 'waiting' | 'ready' | 'playing' | 'over' */
 var myReady=false, oppReady=false, readyTimer=null, countLeft=30;
 var overInfo=null;                 /* {winner, reason} khi gameOver */
+var hostRed=true;                  /* ván hiện tại: chủ phòng cầm quân Đỏ? (host quyết định lúc bắt đầu ván) */
+var gameToken=null;                /* token của ván hiện tại — làm mới mỗi ván */
+var matchGames=0;                  /* số ván đã bắt đầu trong trận (để luân phiên bên đi trước) */
+var score={host:0,guest:0,draws:0}; /* tỉ số theo NGƯỜI CHƠI (chủ phòng / khách), không theo quân */
+var scoreCounted=false;            /* ván hiện tại đã tính điểm chưa (chống tính 2 lần) */
 var playerConn=null, playerGone=false, specConns={};
 var isSpectator=false, everWelcomed=false, restoredSave=null;
 var connOpened=false, guestAttempts=0, guestMaxAttempts=40, guestRetryTimer=null, connectSeq=0, hostRegAttempts=0;
@@ -238,6 +245,7 @@ var SAVE_KEY='duo-save-'+roomCode;
 
 var statusEl=document.getElementById('status'),
     roomInfoEl=document.getElementById('roomInfo'),
+    scoreLineEl=document.getElementById('scoreLine'),
     modeLine=document.getElementById('modeLine'),
     boardEl=document.getElementById('board'),
     copyBtn=document.getElementById('copyBtn'),
@@ -252,6 +260,7 @@ var statusEl=document.getElementById('status'),
 
 function resetGame(){
   board=initialBoard(); turn='r'; selected=null; selMoves=[]; lastMove=null; gameOver=false; overInfo=null;
+  scoreCounted=false;
   started = localMode ? true : connected;
   render(); updateStatus();
   saveGame();
@@ -281,6 +290,7 @@ function endGame(winnerColor, reason){
   overInfo={ winner:winnerColor, reason:reason||'' };
   if(isSpectator) setStatus('👁 Ván đấu đã kết thúc — ' + resultText());
   else setStatus(resultText());
+  recordResult(winnerColor);
   render();
   saveGame();
 }
@@ -436,14 +446,72 @@ function enterReadyPhase(){
   setStatus('Cả hai đã vào phòng! Hãy bấm "Sẵn sàng" để bắt đầu ván.');
   saveGame();
 }
+/* ============ Trận đấu: tỉ số + phân vai ngẫu nhiên/luân phiên + token mỗi ván ============ */
+function newToken(){
+  var alpha='ABCDEFGHJKMNPQRSTUVWXYZ23456789', out='';
+  for(var i=0;i<10;i++) out+=alpha[Math.floor(Math.random()*alpha.length)];
+  return out;
+}
+function recordResult(winnerColor){
+  if(localMode || scoreCounted) return;
+  scoreCounted=true;
+  if(!winnerColor){ score.draws++; }
+  else if((winnerColor==='r')===hostRed){ score.host++; }
+  else { score.guest++; }
+  updateScoreUI();
+}
+function updateScoreUI(){
+  if(localMode){ scoreLineEl.textContent=''; return; }
+  var drawTxt = score.draws ? ' · Hòa: '+score.draws : '';
+  if(isSpectator){
+    scoreLineEl.textContent='Tỉ số — Chủ phòng '+score.host+' : '+score.guest+' Khách'+drawTxt;
+  } else {
+    var mine = isHost ? score.host : score.guest;
+    var theirs = isHost ? score.guest : score.host;
+    scoreLineEl.textContent='Tỉ số — Bạn '+mine+' : '+theirs+' Đối thủ'+drawTxt;
+  }
+}
+function applyAssignment(){
+  if(localMode || isSpectator) return;
+  myColor = isHost ? (hostRed?'r':'b') : (hostRed?'b':'r');
+  flipped = (myColor==='b');
+  modeLine.textContent = 'Chế độ online — bạn là ' + (isHost?'chủ phòng':'khách') + ', cầm quân ' + (myColor==='r'?'Đỏ (đi trước)':'Đen (đi sau)');
+  render();
+}
+function applyStart(hr, token, sc){
+  hostRed=!!hr;
+  gameToken=token||null;
+  if(sc) score={ host:+sc.host||0, guest:+sc.guest||0, draws:+sc.draws||0 };
+  applyAssignment();
+  updateScoreUI();
+  hideReadyPopup();
+  phase='playing'; started=true;
+  if(isSpectator) updateStatus();
+  else setStatus(myColor==='r' ? 'Ván bắt đầu — bạn cầm quân Đỏ, bạn đi trước ván này!' : 'Ván bắt đầu — bạn cầm quân Đen, đối thủ đi trước ván này.');
+  saveGame();
+}
+function beginNewGame(){
+  /* Ván đầu của trận: ngẫu nhiên. Các ván sau: luân phiên bên Đỏ (đi trước). */
+  hostRed = (matchGames===0) ? (Math.random()<0.5) : !hostRed;
+  matchGames++;
+  var t; do { t=newToken(); } while(t===gameToken);
+  gameToken=t;
+  var msg={ type:'start', hostRed:hostRed, token:gameToken, score:{host:score.host,guest:score.guest,draws:score.draws} };
+  if(conn) sendTo(conn,msg);
+  sendToSpecs(msg);
+  applyStart(hostRed, gameToken, msg.score);
+}
 function maybeStartGame(){
   if(phase==='ready' && myReady && oppReady){
     hideReadyPopup();
-    phase='playing';
-    started=true;
-    updateStatus();
+    if(isHost){
+      beginNewGame(); /* chủ phòng quyết định quân + token mới, gửi 'start' cho khách & khán giả */
+    } else {
+      phase='playing';
+      started=true;
+      updateStatus();
+    }
     saveGame();
-    if(isHost) sendToSpecs({type:'start'});
   }
 }
 readyBtn.addEventListener('click', function(){
@@ -461,7 +529,11 @@ function serializeGame(){
     turn: turn,
     lastMove: lastMove,
     gameOver: gameOver,
-    over: overInfo
+    over: overInfo,
+    hostRed: hostRed,
+    token: gameToken,
+    score: {host:score.host, guest:score.guest, draws:score.draws},
+    matchGames: matchGames
   };
 }
 function applyGameState(g){
@@ -471,7 +543,13 @@ function applyGameState(g){
   lastMove = g.lastMove || null;
   gameOver = !!g.gameOver;
   overInfo = g.over || null;
+  if(typeof g.hostRed==='boolean') hostRed=g.hostRed;
+  if(g.token) gameToken=g.token;
+  if(g.score) score={ host:+g.score.host||0, guest:+g.score.guest||0, draws:+g.score.draws||0 };
+  if(typeof g.matchGames==='number') matchGames=g.matchGames;
   selected=null; selMoves=[];
+  applyAssignment();
+  updateScoreUI();
   render();
   if(gameOver && overInfo) setStatus(isSpectator ? '👁 Ván đấu đã kết thúc — ' + resultText() : resultText());
   else updateStatus();
@@ -517,6 +595,7 @@ function becomeSpectator(){
   resignBtn.style.display='none';
   hideReadyPopup();
   setStatus('👁 Bạn đang xem ván này');
+  updateScoreUI();
   render();
 }
 function applySync(data){
@@ -538,10 +617,11 @@ function onData(data){
     if(data.as==='spectator'){ becomeSpectator(); }
     else {
       if(isSpectator){ /* được nhận làm người chơi (người chơi cũ đã rời bàn) */
-        isSpectator=false; myColor='b'; flipped=true;
+        isSpectator=false;
         document.getElementById('restartBtn').style.display='';
         resignBtn.style.display='';
-        modeLine.textContent='Chế độ online — bạn là khách (quân Đen)';
+        applyAssignment(); /* khách: quân theo phân vai hiện tại của trận */
+        updateScoreUI();
       }
       connected=true; started=true;
       resetGame();
@@ -550,7 +630,11 @@ function onData(data){
   } else if(data.type==='sync'){
     applySync(data);
   } else if(data.type==='start'){
-    if(isSpectator){ phase='playing'; updateStatus(); }
+    if(data.token && gameToken && data.token===gameToken && phase==='playing'){
+      /* 'start' trùng token của ván đang chơi — bỏ qua */
+    } else {
+      applyStart(!!data.hostRed, data.token, data.score);
+    }
   } else if(data.type==='move'){
     var fx=+data.fx, fy=+data.fy, tx=+data.tx, ty=+data.ty;
     if([fx,fy,tx,ty].some(isNaN)) return;
@@ -695,8 +779,10 @@ function connectToHost(){
   setupOutgoing(peer.connect('duogames-'+roomCode, {reliable:true}));
 }
 function initOnline(){
-  flipped = !isHost;
-  modeLine.textContent = isHost ? 'Chế độ online — bạn là chủ phòng (quân Đỏ)' : 'Chế độ online — bạn là khách (quân Đen)';
+  if(!restoredSave) flipped = !isHost; /* nếu đã khôi phục ván: giữ hướng bàn theo phân vai đã lưu */
+  modeLine.textContent = isHost ? 'Chế độ online — bạn là chủ phòng' : 'Chế độ online — bạn là khách';
+  updateScoreUI();
+  if(restoredSave) applyAssignment(); /* khôi phục: hiện lại quân của mình theo phân vai đã lưu */
   roomInfoEl.innerHTML = 'Mã phòng: <b>'+escapeHtml(roomCode)+'</b>';
   resignBtn.style.display='';
   if(typeof Peer==='undefined'){ setStatus('⚠️ Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.'); return; }

@@ -75,6 +75,7 @@
   <div class="panel">
     <div id="status">Đang khởi tạo…</div>
     <div id="statusSub" class="small"></div>
+    <div id="scoreLine" class="small hidden" style="margin-top:6px;font-weight:600;color:#facc15;"></div>
     <div class="toolbar">
       <button id="btnRestart" type="button" class="secondary">Ván mới</button>
       <button id="btnResign" type="button" class="danger hidden">Xin thua</button>
@@ -119,6 +120,7 @@
   var boardEl = document.getElementById('board');
   var statusEl = document.getElementById('status');
   var statusSubEl = document.getElementById('statusSub');
+  var scoreEl = document.getElementById('scoreLine');
   var moveCountEl = document.getElementById('moveCount');
   var youAreEl = document.getElementById('youAre');
   var btnRestart = document.getElementById('btnRestart');
@@ -148,7 +150,15 @@
   var peer = null;
   var conn = null;         // kết nối chính: với chủ phòng (khách) hoặc với người chơi (chủ phòng)
   var connected = false;
-  var myMark = null;       // 'X' nếu là chủ phòng, 'O' nếu là khách (chế độ online)
+  var myMark = null;       // quân của người đang mở trang này (chế độ online)
+
+  // Trạng thái trận đấu (match) — chỉ online, chủ phòng là phía quyết định phân vai
+  var hostX = true;        // ván hiện tại: chủ phòng cầm quân X?
+  var lastHostX = null;    // phân vai của ván trước (để luân phiên ở ván sau)
+  var gamesStarted = 0;    // số ván đã bắt đầu trong trận này
+  var gameToken = null;    // token của ván hiện tại — làm mới ở đầu mỗi ván
+  var score = { host: 0, guest: 0, draws: 0 }; // tỉ số theo NGƯỜI CHƠI (không theo quân)
+  var scoreCounted = false; // ván hiện tại đã cộng tỉ số chưa (chỉ cộng đúng 1 lần)
 
   // Phân vai phía chủ phòng + khán giả
   var playerConn = null;   // kết nối của người chơi được chấp nhận (chỉ chủ phòng giữ)
@@ -231,8 +241,20 @@
     phase = 'playing';
     stopCountdown();
     readyOverlay.classList.add('hidden');
+    if (isHost) {
+      // Chủ phòng quyết định phân vai cho ván mới: ván đầu của trận thì bốc thăm,
+      // các ván sau luân phiên (ai cầm X ván trước thì ván này cầm O).
+      hostX = gamesStarted === 0 ? (Math.random() < 0.5) : !lastHostX;
+      lastHostX = hostX;
+      gamesStarted++;
+      gameToken = genToken(); // mỗi ván một token mới
+      scoreCounted = false;
+      refreshIdentityUI();
+      var startMsg = { type: 'start', hostX: hostX, token: gameToken, score: score };
+      sendMsg(startMsg); // gửi cho người chơi
+      broadcastToSpectators(startMsg); // và cho khán giả — cùng một phân vai
+    }
     setStatus('Cả hai đã sẵn sàng! Trận đấu bắt đầu.', '');
-    if (isHost) broadcastToSpectators({ type: 'start' });
     saveGame();
     updateTurnStatus();
   }
@@ -329,9 +351,9 @@
     } else if (online) {
       if (!connected) return; // trạng thái kết nối đang được hiển thị
       if (current === myMark) {
-        setStatus('Lượt của bạn (' + myMark + ')', 'Hãy chọn một ô trống trên bàn cờ.');
+        setStatus(moveCount === 0 ? 'Bạn đi trước ván này — lượt của bạn (' + myMark + ')' : 'Lượt của bạn (' + myMark + ')', 'Hãy chọn một ô trống trên bàn cờ.');
       } else {
-        setStatus('Chờ đối thủ…', 'Đối thủ đang nghĩ nước đi.');
+        setStatus(moveCount === 0 ? 'Đối thủ đi trước ván này — chờ đối thủ…' : 'Chờ đối thủ…', 'Đối thủ đang nghĩ nước đi.');
       }
     }
   }
@@ -357,6 +379,7 @@
       } else {
         setStatus('Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
       }
+      countScore(mark);
       saveGame();
       return;
     }
@@ -365,6 +388,7 @@
       winner = 'draw';
       if (isSpectator) spectatorPhase = 'over';
       setStatus('Hòa! Bàn cờ đã đầy.', 'Bấm "Ván mới" để chơi lại.');
+      countScore('draw');
       saveGame();
       return;
     }
@@ -400,6 +424,7 @@
     winCells = null;
     moveCount = 0;
     lastMove = null;
+    scoreCounted = false; // ván mới: chưa cộng tỉ số
     buildBoard();
     render();
     if (isSpectator) {
@@ -451,6 +476,50 @@
     return 'waiting';
   }
 
+  // ---------- Trận đấu: token, tỉ số, phân vai ----------
+  function genToken() {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    var t = '';
+    for (var i = 0; i < 10; i++) t += chars.charAt(Math.floor(Math.random() * chars.length));
+    return t;
+  }
+
+  // Quân này do ai cầm trong ván hiện tại ('chủ phòng' | 'khách')
+  function markOwner(mark) {
+    return (mark === 'X') === hostX ? 'chủ phòng' : 'khách';
+  }
+
+  function updateScoreUI() {
+    if (!online) { scoreEl.classList.add('hidden'); return; }
+    scoreEl.classList.remove('hidden');
+    if (isSpectator) {
+      scoreEl.textContent = 'Tỉ số — Chủ phòng ' + score.host + ' : ' + score.guest + ' Khách • Hòa ' + score.draws;
+    } else {
+      var mine = isHost ? score.host : score.guest;
+      var theirs = isHost ? score.guest : score.host;
+      scoreEl.textContent = 'Tỉ số — Bạn ' + mine + ' : ' + theirs + ' Đối thủ • Hòa ' + score.draws;
+    }
+  }
+
+  // Cộng tỉ số đúng 1 lần khi ván kết thúc. result: quân thắng ('X'/'O') hoặc 'draw'.
+  function countScore(result) {
+    if (!online || scoreCounted) return;
+    scoreCounted = true;
+    if (result === 'draw') score.draws++;
+    else if ((result === 'X') === hostX) score.host++;
+    else score.guest++;
+    updateScoreUI();
+  }
+
+  // Cập nhật quân của mình + nhãn "Bạn là quân…" + bảng tỉ số theo phân vai hiện tại
+  function refreshIdentityUI() {
+    if (!online) return;
+    if (isSpectator) { applySpectatorUI(); updateScoreUI(); return; }
+    myMark = isHost ? (hostX ? 'X' : 'O') : (hostX ? 'O' : 'X');
+    youAreEl.textContent = 'Bạn là quân ' + myMark + (myMark === 'X' ? ' (đi trước)' : '');
+    updateScoreUI();
+  }
+
   // ---------- Lưu / khôi phục ván đấu (localStorage, giữ 15 phút) ----------
   function serializeGame() {
     return {
@@ -460,7 +529,12 @@
       lastMove: lastMove,
       gameOver: gameOver,
       winner: winner,
-      winCells: winCells
+      winCells: winCells,
+      hostX: hostX,
+      token: gameToken,
+      score: { host: score.host, guest: score.guest, draws: score.draws },
+      gamesStarted: gamesStarted,
+      lastHostX: lastHostX
     };
   }
 
@@ -473,9 +547,16 @@
     gameOver = g.gameOver;
     winner = g.winner;
     winCells = g.winCells;
+    hostX = g.hostX !== false;
+    gameToken = g.token || null;
+    if (g.score) score = { host: g.score.host | 0, guest: g.score.guest | 0, draws: g.score.draws | 0 };
+    if (typeof g.gamesStarted === 'number') gamesStarted = g.gamesStarted;
+    if (g.lastHostX === true || g.lastHostX === false) lastHostX = g.lastHostX;
+    scoreCounted = !!g.gameOver; // ván đã kết thúc trong bản lưu = đã cộng tỉ số rồi
     buildBoard();
     render();
     if (winCells) winCells.forEach(function (p) { cells[p.y][p.x].classList.add('win'); });
+    updateScoreUI();
   }
 
   function saveGame() {
@@ -518,7 +599,7 @@
     if (spectatorPhase === 'over') {
       sub = winner === 'draw' ? 'Ván đấu đã kết thúc: hòa.' : (winner ? 'Ván đấu đã kết thúc: quân ' + winner + ' thắng.' : 'Ván đấu đã kết thúc.');
     } else if (spectatorPhase === 'playing') {
-      sub = 'Lượt của quân ' + current + ' (' + (current === 'X' ? 'chủ phòng' : 'khách') + ').';
+      sub = 'Lượt của quân ' + current + ' (' + markOwner(current) + ').';
     } else {
       sub = 'Đang chờ hai người chơi sẵn sàng để bắt đầu ván…';
     }
@@ -528,7 +609,7 @@
   function applySpectatorUI() {
     btnRestart.classList.add('hidden');
     btnResign.classList.add('hidden');
-    youAreEl.textContent = 'Bạn đang xem: X = chủ phòng, O = khách';
+    youAreEl.textContent = 'Bạn đang xem: X = ' + (hostX ? 'chủ phòng' : 'khách') + ', O = ' + (hostX ? 'khách' : 'chủ phòng');
   }
 
   function shareLink() {
@@ -550,7 +631,7 @@
       playerGone = false;
       connected = true;
       btnResign.classList.remove('hidden');
-      youAreEl.textContent = 'Bạn là quân X (đi trước)';
+      refreshIdentityUI();
       sendTo(c, { type: 'welcome', as: 'player' });
       var inProgress = gameOver || moveCount > 0 || phase === 'playing';
       if (inProgress) {
@@ -645,13 +726,13 @@
       if (data.as === 'spectator') {
         isSpectator = true;
         applySpectatorUI();
+        updateScoreUI();
         setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ ván đấu…');
       } else {
         isSpectator = false;
-        myMark = 'O';
         btnResign.classList.remove('hidden');
         btnRestart.classList.remove('hidden');
-        youAreEl.textContent = 'Bạn là quân O';
+        refreshIdentityUI();
         if (restoredPhase === 'playing' || restoredPhase === 'over') {
           // Đã có ván lưu: chờ chủ phòng gửi sync (trạng thái chuẩn) trong giây lát
           expectingSync = true;
@@ -674,8 +755,11 @@
       applyState(data.state);
       if (isSpectator) {
         spectatorPhase = data.phase;
+        applySpectatorUI();
+        updateScoreUI();
         spectatorStatus();
       } else {
+        refreshIdentityUI(); // sync mang theo hostX/token/score — cập nhật quân + tỉ số
         phase = data.phase === 'over' ? 'over' : 'playing';
         stopCountdown();
         readyOverlay.classList.add('hidden');
@@ -687,7 +771,29 @@
       }
       saveGame();
     } else if (data.type === 'start') {
-      if (isSpectator) { spectatorPhase = 'playing'; spectatorStatus(); }
+      if (isSpectator) {
+        hostX = data.hostX !== false;
+        gameToken = data.token || gameToken;
+        if (data.score) score = { host: data.score.host | 0, guest: data.score.guest | 0, draws: data.score.draws | 0 };
+        scoreCounted = false;
+        spectatorPhase = 'playing';
+        applySpectatorUI();
+        updateScoreUI();
+        spectatorStatus();
+      } else {
+        // Bỏ qua 'start' trùng token của ván đang chạy (tránh áp dụng 2 lần)
+        if (phase === 'playing' && gameToken && data.token === gameToken) return;
+        hostX = data.hostX !== false;
+        gameToken = data.token || null;
+        if (data.score) score = { host: data.score.host | 0, guest: data.score.guest | 0, draws: data.score.draws | 0 };
+        scoreCounted = false;
+        refreshIdentityUI(); // nhận phân vai từ chủ phòng: quân của mình có thể đã đổi
+        phase = 'playing';
+        stopCountdown();
+        readyOverlay.classList.add('hidden');
+        updateTurnStatus();
+        saveGame();
+      }
     } else if (data.type === 'move') {
       var x = data.x, y = data.y;
       if (typeof x !== 'number' || typeof y !== 'number') return;
@@ -707,12 +813,15 @@
     } else if (data.type === 'resign') {
       gameOver = true;
       if (isSpectator) {
-        winner = data.by === 'host' ? 'O' : 'X';
+        winner = data.by === 'host' ? (hostX ? 'O' : 'X') : (hostX ? 'X' : 'O');
+        countScore(winner);
         spectatorPhase = 'over';
         setStatus('🎉 Quân ' + winner + ' thắng (đối thủ xin thua)!', 'Bạn đang xem ván đấu này.');
       } else {
         winner = myMark;
+        countScore(winner);
         setStatus('🎉 Đối thủ đã xin thua — bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
+        if (isHost) broadcastToSpectators({ type: 'resign', by: 'guest' }); // chuyển tiếp cho khán giả
       }
       saveGame();
     }
@@ -763,7 +872,7 @@
           setStatus('Đã khôi phục phòng — chờ đối thủ vào phòng…', 'Khi đối thủ vào phòng, cả hai sẽ bấm Sẵn sàng để bắt đầu.');
         }
       } else {
-        setStatus('Đang chờ đối thủ vào phòng…', 'Phòng đã sẵn sàng. Bạn là quân X và đi trước.');
+        setStatus('Đang chờ đối thủ vào phòng…', 'Phòng đã sẵn sàng. Quân đi trước được bốc thăm ở ván đầu và luân phiên ở các ván sau.');
       }
     });
     peer.on('connection', function (c) { hostWireConnection(c); });
@@ -794,11 +903,11 @@
       return;
     }
     if (isHost) {
-      myMark = 'X';
-      youAreEl.textContent = 'Bạn là quân X (đi trước)';
+      refreshIdentityUI();
+      if (!restoredSave) youAreEl.textContent = 'Bạn là chủ phòng — quân đi trước được bốc thăm ở ván đầu, luân phiên các ván sau';
       document.getElementById('shareText').textContent = 'Gửi link mời này cho đối thủ để họ vào phòng:';
       if (!restoredSave) {
-        setStatus('Đang chờ đối thủ vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Bạn là quân X và đi trước.');
+        setStatus('Đang chờ đối thủ vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên để đối thủ vào phòng.');
       }
       registerHost();
     } else {
@@ -856,6 +965,7 @@
     if (isHost) broadcastToSpectators({ type: 'resign', by: 'host' });
     gameOver = true;
     winner = myMark === 'X' ? 'O' : 'X';
+    countScore(winner);
     setStatus('Bạn đã xin thua. Đối thủ thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
     saveGame();
   });
@@ -901,6 +1011,7 @@
       restoredSave = save;
       restoredPhase = save.phase;
       applyState(save.game); // hiện lại bàn cờ đã lưu trong lúc chờ kết nối lại
+      refreshIdentityUI(); // khôi phục đúng quân + tỉ số của trận đang dở
     }
   }
 
