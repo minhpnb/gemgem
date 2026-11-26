@@ -35,7 +35,13 @@
   @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.14); } }
   .meta { display: flex; justify-content: space-between; color: #94a3b8; font-size: .95rem; margin-top: 10px; }
   #dicePanel { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  #diceFace { font-size: 3rem; line-height: 1; min-width: 3.4rem; text-align: center; background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 4px 0; }
+  /* Xúc xắc 3D: khối lập phương CSS, mỗi mặt là lưới 3×3 chấm */
+  #diceScene { width: 76px; height: 76px; perspective: 420px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+  #diceCube { width: 64px; height: 64px; position: relative; transform-style: preserve-3d; transition: transform 1.1s cubic-bezier(.15,.8,.25,1); }
+  .dface { position: absolute; inset: 0; background: linear-gradient(145deg, #ffffff, #cbd5e1); border: 1px solid #94a3b8; border-radius: 12px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); padding: 9px; box-shadow: inset 0 0 12px rgba(15,23,42,.18); }
+  .dface .pip { width: 12px; height: 12px; border-radius: 50%; background: #1e293b; place-self: center; box-shadow: inset 0 1px 3px rgba(0,0,0,.55); }
+  .dface .pip.red { background: #dc2626; width: 15px; height: 15px; }
+  .horse.movable-wait { box-shadow: 0 0 0 2px #facc15, 0 0 8px #facc15; animation: pulse 0.8s ease-in-out infinite alternate; cursor: default; }
   #moveBtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .78); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
   .overlay.hidden { display: none; }
@@ -103,7 +109,7 @@
   </div>
 
   <div class="panel" id="dicePanel">
-    <div id="diceFace">🎲</div>
+    <div id="diceScene"><div id="diceCube"></div></div>
     <div style="flex:1;min-width:180px;">
       <div id="diceInfo">Xúc xắc sẵn sàng.</div>
       <div class="toolbar" style="margin:8px 0 0;">
@@ -182,7 +188,37 @@
     [[10,10],[10,12],[12,10],[12,12]],
     [[10,2],[10,4],[12,2],[12,4]]
   ];
-  var DICE_FACES = ['⚀','⚁','⚂','⚃','⚄','⚅'];
+  // Xúc xắc 3D: vị trí các mặt trên khối lập phương (mặt 1 trước, 6 sau, 3 phải, 4 trái, 2 trên, 5 dưới)
+  var DICE_FACE_TRANSFORM = {
+    1: 'translateZ(32px)',
+    6: 'rotateY(180deg) translateZ(32px)',
+    3: 'rotateY(90deg) translateZ(32px)',
+    4: 'rotateY(-90deg) translateZ(32px)',
+    2: 'rotateX(90deg) translateZ(32px)',
+    5: 'rotateX(-90deg) translateZ(32px)'
+  };
+  // Góc quay [rotateX, rotateY] của khối để mặt có giá trị tương ứng hướng ra người xem
+  var DICE_SHOW = {
+    1: [0, 0],
+    6: [0, 180],
+    3: [0, -90],
+    4: [0, 90],
+    2: [-90, 0],
+    5: [90, 0]
+  };
+  // Bố cục chấm trên lưới 3×3 (chỉ số ô 0..8) cho từng mặt
+  var DICE_PIPS = {
+    1: [4],
+    2: [0, 8],
+    3: [0, 4, 8],
+    4: [0, 2, 6, 8],
+    5: [0, 2, 4, 6, 8],
+    6: [0, 2, 3, 5, 6, 8]
+  };
+  // Thời gian trình diễn xúc xắc: quay 3D ~1,1s rồi giữ nguyên ~2s để mọi người theo dõi kết quả
+  var SPIN_MS = 1100;
+  var OBSERVE_MS = 2000;
+  var ROLL_WINDOW_MS = SPIN_MS + OBSERVE_MS; // 3100ms kể từ lúc có kết quả đổ
   var PEER_OPTS = { config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }, { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' } ] } };
 
   var params = new URLSearchParams(location.search);
@@ -196,7 +232,7 @@
   function el(id) { return document.getElementById(id); }
   var boardEl = el('board'), statusEl = el('status'), statusSubEl = el('statusSub');
   var turnLineEl = el('turnLine'), youAreEl = el('youAre');
-  var diceFaceEl = el('diceFace'), diceInfoEl = el('diceInfo'), btnRoll = el('btnRoll'), moveBtnsEl = el('moveBtns');
+  var diceCubeEl = el('diceCube'), diceInfoEl = el('diceInfo'), btnRoll = el('btnRoll'), moveBtnsEl = el('moveBtns');
   var roomInfoEl = el('roomInfo'), roomCodeText = el('roomCodeText'), btnCopy = el('btnCopy'), shareText = el('shareText');
   var setupEl = el('setup'), localSetupEl = el('localSetup');
   var lobbyOverlay = el('lobbyOverlay'), lobbyBody = el('lobbyBody'), lobbyNote = el('lobbyNote'), btnLobbyReady = el('btnLobbyReady');
@@ -215,6 +251,12 @@
   var connectAttempt = 0, guestConnRetry = 0, guestRetryTimer = null;
   var wantReconnect = false, specRetry = 0;
   var localPlayerCount = 2;
+  // Trình diễn xúc xắc 3D + cửa sổ quan sát sau khi đổ
+  var diceRotX = 0, diceRotY = 0; // góc quay tích lũy của khối xúc xắc
+  var diceShown = 1;              // mặt đang hướng ra người xem
+  var diceAnimating = false;      // đang trong hiệu ứng quay
+  var rollWindowUntil = 0;        // mốc Date.now() mà cửa sổ quay+quan sát kết thúc
+  var rollAnimTimer = null;       // hẹn giờ vẽ lại khi cửa sổ kết thúc
 
   // Phía host: sổ ghế — seats[s] = null | {conn, name, connected, ready, wins}
   var seats = [null, null, null, null];
@@ -482,7 +524,7 @@
       cellEl.classList.add(list.length === 1 ? 'n1' : list.length === 2 ? 'n2' : list.length === 3 ? 'n3' : list.length === 4 ? 'n4' : 'nM');
       list.forEach(function (it) {
         var t = document.createElement('span');
-        t.className = 'horse' + (movableSet[it.seat + ':' + it.horse] ? ' movable' : '');
+        t.className = 'horse' + (movableSet[it.seat + ':' + it.horse] ? (rollWindowOpen() ? ' movable-wait' : ' movable') : '');
         t.style.background = SEAT_COLORS[it.seat];
         t.textContent = '♞';
         t.addEventListener('click', function (ev) {
@@ -501,17 +543,81 @@
     return online && !isSpectator && mySeat !== null && G.turn === mySeat;
   }
 
-  function renderDice() {
-    if (G && G.dice != null) {
-      diceFaceEl.textContent = DICE_FACES[G.dice - 1];
-    } else {
-      diceFaceEl.textContent = '🎲';
+  // ================= Xúc xắc 3D + cửa sổ quan sát =================
+  function buildDice() {
+    diceCubeEl.innerHTML = '';
+    for (var v = 1; v <= 6; v++) {
+      var f = document.createElement('div');
+      f.className = 'dface';
+      f.style.transform = DICE_FACE_TRANSFORM[v];
+      for (var i = 0; i < 9; i++) {
+        var cell = document.createElement('span');
+        if (DICE_PIPS[v].indexOf(i) !== -1) cell.className = 'pip' + (v === 1 ? ' red' : '');
+        f.appendChild(cell);
+      }
+      diceCubeEl.appendChild(f);
     }
+    diceCubeEl.style.transform = 'rotateX(0deg) rotateY(0deg)';
+  }
+
+  // Góc tích lũy tiếp theo: cộng thêm ít nhất `extra` độ, rồi chốt đúng phần dư theo góc đích
+  function nextAngle(cur, target, extra) {
+    var base = cur + extra;
+    var mod = ((base % 360) + 360) % 360;
+    var want = ((target % 360) + 360) % 360;
+    return base + (((want - mod) % 360) + 360) % 360;
+  }
+
+  // Quay 3D tới mặt value (thêm tối thiểu 2 vòng đầy trên mỗi trục), dừng đúng mặt đó
+  function spinDiceTo(value) {
+    var base = DICE_SHOW[value];
+    diceRotX = nextAngle(diceRotX, base[0], 720);
+    diceRotY = nextAngle(diceRotY, base[1], 720);
+    diceShown = value;
+    diceAnimating = true;
+    diceCubeEl.style.transform = 'rotateX(' + diceRotX + 'deg) rotateY(' + diceRotY + 'deg)';
+    setTimeout(function () { diceAnimating = false; }, SPIN_MS + 60);
+  }
+
+  // Đặt khối đứng yên ngay tại mặt value (không hiệu ứng) — dùng khi nhận trạng thái đồng bộ
+  function snapDiceTo(value) {
+    var base = DICE_SHOW[value];
+    diceRotX = base[0];
+    diceRotY = base[1];
+    diceShown = value;
+    diceAnimating = false;
+    diceCubeEl.style.transition = 'none';
+    diceCubeEl.style.transform = 'rotateX(' + diceRotX + 'deg) rotateY(' + diceRotY + 'deg)';
+    setTimeout(function () { diceCubeEl.style.transition = ''; }, 30);
+  }
+
+  // Cửa sổ quay + quan sát còn đang mở? (trong cửa sổ này chưa ai chọn ngựa được)
+  function rollWindowOpen() { return Date.now() < rollWindowUntil; }
+
+  // Bắt đầu trình diễn một kết quả đổ: quay 3D ~1,1s rồi giữ ~2s cho mọi người theo dõi
+  function beginRollWindow(value) {
+    rollWindowUntil = Date.now() + ROLL_WINDOW_MS;
+    spinDiceTo(value);
+    if (rollAnimTimer) clearTimeout(rollAnimTimer);
+    rollAnimTimer = setTimeout(function () {
+      rollAnimTimer = null;
+      renderAll();
+    }, ROLL_WINDOW_MS + 40);
+  }
+
+  // Trang này đã được chọn ngựa cho lượt hiện tại chưa (phải qua cửa sổ quan sát)?
+  function canSelectMove() {
+    return canAct() && G && G.dice != null && !rollWindowOpen();
+  }
+
+  function renderDice() {
+    // Nếu có kết quả đổ mà khối chưa trình diễn mặt đó (ví dụ nhận qua sync) thì đặt ngay đúng mặt
+    if (G && G.dice != null && !diceAnimating && G.dice !== diceShown) snapDiceTo(G.dice);
     var myTurn = canAct() && G && G.dice == null && seatConnected(G.turn);
     btnRoll.disabled = !myTurn;
-    // Nút chọn ngựa cho các ngựa đi được
+    // Nút chọn ngựa cho các ngựa đi được — chỉ hiện sau khi cửa sổ quay + quan sát kết thúc
     moveBtnsEl.innerHTML = '';
-    if (canAct() && G && G.dice != null && seatConnected(G.turn)) {
+    if (canSelectMove() && seatConnected(G.turn)) {
       G.movable.forEach(function (h) {
         var b = document.createElement('button');
         b.type = 'button';
@@ -524,6 +630,7 @@
     if (!G) diceInfoEl.textContent = 'Xúc xắc sẵn sàng.';
     else if (G.phase === 'over') diceInfoEl.textContent = 'Ván đấu đã kết thúc.';
     else if (G.dice == null) diceInfoEl.textContent = 'Lượt: ' + seatDisplayName(G.turn) + ' (' + SEAT_NAMES[G.turn] + ')';
+    else if (rollWindowOpen()) diceInfoEl.textContent = seatDisplayName(G.turn) + ' đổ được ' + G.dice + ' — đang xem kết quả xúc xắc…';
     else diceInfoEl.textContent = seatDisplayName(G.turn) + ' đổ được ' + G.dice + ' — chọn ngựa để đi.';
   }
 
@@ -548,7 +655,7 @@
     if (online && isSpectator) {
       if (!G) { setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ từ chủ phòng…'); return; }
       if (G.phase === 'over') { setStatus('🎉 ' + seatDisplayName(G.winner) + ' (' + SEAT_NAMES[G.winner] + ') thắng ván này!', 'Bạn đang xem ván đấu này.'); return; }
-      setStatus(narr || ('Lượt: ' + seatDisplayName(G.turn) + ' (' + SEAT_NAMES[G.turn] + ')'), 'Bạn đang xem ván đấu này.');
+      setStatus(narr || (G.dice != null ? (seatDisplayName(G.turn) + ' đổ được ' + G.dice + '.') : ('Lượt: ' + seatDisplayName(G.turn) + ' (' + SEAT_NAMES[G.turn] + ')')), 'Bạn đang xem ván đấu này.');
       return;
     }
     if (!G) {
@@ -568,6 +675,10 @@
     if (G.dice == null) {
       if (canAct()) setStatus(narr || 'Lượt của bạn!', 'Bấm 🎲 Đổ xúc xắc. Đổ 6 để ra quân và được đổ lại.');
       else setStatus(narr || ('Lượt: ' + seatDisplayName(G.turn) + ' (' + SEAT_NAMES[G.turn] + ')'), 'Chờ ' + seatDisplayName(G.turn) + ' đổ xúc xắc…');
+    } else if (rollWindowOpen()) {
+      // Đang quay 3D / đang trong ~2s quan sát: chỉ thông báo kết quả, chưa cho chọn ngựa
+      if (canAct()) setStatus(narr || ('Bạn đổ được ' + G.dice + '!'), 'Xúc xắc vừa đổ xong — hãy theo dõi kết quả, sắp tới lúc chọn ngựa.');
+      else setStatus(narr || (seatDisplayName(G.turn) + ' đổ được ' + G.dice + '.'), 'Đang theo dõi kết quả xúc xắc của ' + seatDisplayName(G.turn) + '…');
     } else {
       if (canAct()) setStatus(narr || ('Bạn đổ được ' + G.dice + '!'), 'Chọn một ngựa được tô sáng (hoặc bấm nút Ngựa bên dưới) để đi.');
       else setStatus(narr || (seatDisplayName(G.turn) + ' đổ được ' + G.dice + '.'), 'Chờ ' + seatDisplayName(G.turn) + ' chọn ngựa…');
@@ -633,6 +744,7 @@
 
   function onHorseClick(seat, horse) {
     if (!canAct()) return;
+    if (rollWindowOpen()) return; // đang quay / đang trong 2s quan sát: chưa chọn ngựa được
     if (seat !== G.turn || G.dice == null) return;
     if (G.movable.indexOf(horse) === -1) return;
     requestMove(horse);
@@ -640,6 +752,7 @@
 
   function onCellClick(r, c) {
     if (!canAct() || !G || G.dice == null) return;
+    if (rollWindowOpen()) return;
     // Tìm ngựa đi được của người tới lượt đang đứng ở ô này
     for (var i = 0; i < G.movable.length; i++) {
       var h = G.movable[i];
@@ -673,20 +786,22 @@
     if (online && isHost) {
       broadcastAll({ type: 'rolled', seat: seat, value: value, movable: G.movable.slice(), state: G });
     }
+    beginRollWindow(value); // phía có thẩm quyền cũng trình diễn quay 3D + cửa sổ quan sát như mọi máy
     renderAll([{ type: 'rolled', seat: seat, value: value }]);
     if (G.movable.length === 0) {
-      // Không có nước đi: tự động qua lượt sau ~1,2 giây
+      // Không có nước đi: chỉ tự qua lượt SAU khi quay xong + hết ~2s quan sát (thêm đệm an toàn)
       var tk = G.token, tn = G.turn, dv = value;
       setTimeout(function () {
         if (!G || G.phase !== 'playing' || G.turn !== tn || G.dice !== dv || G.token !== tk) return;
         advanceTurn();
         publishState([{ type: 'nomove', seat: tn }]);
-      }, 1200);
+      }, ROLL_WINDOW_MS + 400);
     }
   }
 
   function doMove(seat, horse) {
     if (!G || G.phase !== 'playing' || G.dice == null) return;
+    if (rollWindowOpen()) return; // host cũng phải chờ hết cửa sổ quay + quan sát của chính mình
     if (seat !== G.turn) return;
     if (G.movable.indexOf(horse) === -1) return;
     var value = G.dice;
@@ -730,6 +845,7 @@
   // Yêu cầu đi một ngựa (từ UI của trang này)
   function requestMove(horse) {
     if (!G || G.phase !== 'playing' || G.dice == null) return;
+    if (rollWindowOpen()) return; // chưa hết cửa sổ quan sát: không gửi yêu cầu đi ngựa
     if (isAuthority) {
       if (online && G.turn !== mySeat) return;
       doMove(G.turn, horse);
@@ -1139,6 +1255,7 @@
       renderAll([{ type: 'start', seat: data.startSeat }]);
     } else if (data.type === 'rolled') {
       G = data.state;
+      beginRollWindow(data.value); // mọi máy cùng quay 3D + giữ ~2s quan sát, đồng bộ với host
       renderAll([{ type: 'rolled', seat: data.seat, value: data.value }]);
     } else if (data.type === 'state') {
       G = data.state;
@@ -1300,6 +1417,7 @@
   // ================= Khởi tạo =================
   myName = loadProfile();
   buildBoard();
+  buildDice();
   renderAll();
 
   if (isLocal) {
@@ -1322,6 +1440,12 @@
     START_OFFSET: START_OFFSET, SAFE: SAFE,
     absIndex: absIndex, cellOf: cellOf, legalMoves: legalMoves, applyMove: applyMove,
     newGameState: newGameState,
+    DICE_SHOW: DICE_SHOW, DICE_FACE_TRANSFORM: DICE_FACE_TRANSFORM, DICE_PIPS: DICE_PIPS,
+    SPIN_MS: SPIN_MS, OBSERVE_MS: OBSERVE_MS, ROLL_WINDOW_MS: ROLL_WINDOW_MS,
+    rollWindowOpen: rollWindowOpen,
+    getRollWindowUntil: function () { return rollWindowUntil; },
+    getDiceShown: function () { return diceShown; },
+    getDiceTransform: function () { return diceCubeEl.style.transform || ''; },
     getG: function () { return G; },
     getLobby: function () { return lobbyPlayers; },
     getMySeat: function () { return mySeat; },
