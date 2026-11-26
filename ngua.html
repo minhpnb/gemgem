@@ -27,11 +27,18 @@
   .cell.track { background: #e2e8f0; }
   .cell.slot { border-radius: 50%; background: #f8fafc; border: 2px solid #64748b; }
   .cell.center { color: #facc15; font-weight: 800; }
-  .horse { border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; border: 2px solid rgba(2,6,23,.55); text-shadow: 0 1px 2px rgba(0,0,0,.6); line-height: 1; flex: 0 0 auto; }
+  .horse { border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; border: 2px solid rgba(2,6,23,.55); text-shadow: 0 1px 2px rgba(0,0,0,.6); line-height: 1; flex: 0 0 auto; position: relative; }
   .cell.n1 .horse { width: 94%; height: 94%; font-size: clamp(8px, 3vw, 19px); }
   .cell.n2 .horse, .cell.n3 .horse, .cell.n4 .horse { width: 47%; height: 47%; font-size: clamp(5px, 1.8vw, 11px); border-width: 1px; }
   .cell.nM .horse { width: 31%; height: 31%; font-size: clamp(4px, 1.4vw, 8px); border-width: 1px; }
   .horse.movable { cursor: pointer; box-shadow: 0 0 0 2px #facc15, 0 0 8px #facc15; animation: pulse 0.8s ease-in-out infinite alternate; }
+  /* Ngựa đi được: vùng bấm mở rộng quanh token (kể cả khi token bị thu nhỏ vì đứng chung ô) */
+  .horse.clickable { cursor: pointer; z-index: 3; }
+  .horse.clickable::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; }
+  /* Hiệu ứng nhảy từng ô khi di chuyển và bay về chuồng khi bị đá */
+  .horse.hop { animation: hopstep .18s ease-in-out; z-index: 4; }
+  @keyframes hopstep { 0% { transform: translateY(0) scale(1); } 45% { transform: translateY(-38%) scale(1.18); } 100% { transform: translateY(0) scale(1); } }
+  .horse.flying { z-index: 6; pointer-events: none; }
   @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.14); } }
   .meta { display: flex; justify-content: space-between; color: #94a3b8; font-size: .95rem; margin-top: 10px; }
   #dicePanel { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
@@ -139,6 +146,9 @@
       </table>
       <div id="lobbyNote" class="small" style="margin-bottom:12px;">Đang chờ thêm người chơi…</div>
       <button id="btnLobbyReady" type="button">✅ Sẵn sàng</button>
+      <div style="margin-top:10px;">
+        <button id="btnLobbyCopy" type="button" class="secondary">📋 Sao chép link mời</button>
+      </div>
     </div>
   </div>
 
@@ -235,7 +245,7 @@
   var diceCubeEl = el('diceCube'), diceInfoEl = el('diceInfo'), btnRoll = el('btnRoll'), moveBtnsEl = el('moveBtns');
   var roomInfoEl = el('roomInfo'), roomCodeText = el('roomCodeText'), btnCopy = el('btnCopy'), shareText = el('shareText');
   var setupEl = el('setup'), localSetupEl = el('localSetup');
-  var lobbyOverlay = el('lobbyOverlay'), lobbyBody = el('lobbyBody'), lobbyNote = el('lobbyNote'), btnLobbyReady = el('btnLobbyReady');
+  var lobbyOverlay = el('lobbyOverlay'), lobbyBody = el('lobbyBody'), lobbyNote = el('lobbyNote'), btnLobbyReady = el('btnLobbyReady'), btnLobbyCopy = el('btnLobbyCopy');
   var btnRematch = el('btnRematch'), btnChangeName = el('btnChangeName');
   var nameOverlay = el('nameOverlay'), nameInput = el('nameInput'), btnNameDice = el('btnNameDice'), btnNameSave = el('btnNameSave');
 
@@ -257,6 +267,13 @@
   var diceAnimating = false;      // đang trong hiệu ứng quay
   var rollWindowUntil = 0;        // mốc Date.now() mà cửa sổ quay+quan sát kết thúc
   var rollAnimTimer = null;       // hẹn giờ vẽ lại khi cửa sổ kết thúc
+  // Animation di chuyển ngựa: bước từng ô, ngựa bị đá bay về chuồng
+  var STEP_MS = 180;              // thời gian bước qua mỗi ô (~6 bước ≈ 1,1s)
+  var KICK_FLY_MS = 480;          // thời gian ngựa bị đá bay thẳng về chuồng
+  var animLock = false;           // đang chiếu animation di chuyển: khóa mọi thao tác
+  var animDisplay = null;         // {horses, hopSeat, hopHorse}: trạng thái hiển thị tạm trong lúc animation
+  var animTimers = [];            // các hẹn giờ của animation đang chạy
+  var tokenEls = {};              // "seat:horse" -> phần tử token đang hiển thị (để làm hiệu ứng bay)
 
   // Phía host: sổ ghế — seats[s] = null | {conn, name, connected, ready, wins}
   var seats = [null, null, null, null];
@@ -392,7 +409,7 @@
             var q = state.horses[s2][j];
             if (q >= 0 && q <= 50 && absIndex(s2, q) === abs) {
               state.horses[s2][j] = -1;
-              events.push({ type: 'kick', by: seat, victim: s2, horse: j });
+              events.push({ type: 'kick', by: seat, victim: s2, horse: j, from: q });
             }
           }
         }
@@ -494,6 +511,7 @@
   function renderBoard() {
     // Xoá ngựa cũ
     var r, c, i;
+    tokenEls = {};
     for (r = 0; r < 15; r++) for (c = 0; c < 15; c++) {
       var cell = cells[r][c];
       cell.className = cell.className.replace(/ n[0-9M]+/g, '');
@@ -501,13 +519,16 @@
       if (r === 7 && c === 7) cell.textContent = '★';
     }
     if (!G) return;
+    // Trong lúc chiếu animation di chuyển: vẽ theo trạng thái hiển thị tạm (animDisplay),
+    // chưa dùng trạng thái cuối đã nhận từ host.
+    var horsesSrc = animDisplay ? animDisplay.horses : G.horses;
     // Gom ngựa theo ô
     var byCell = {};
     var act = activeSeats();
     for (i = 0; i < act.length; i++) {
       var s = act[i];
       for (var h = 0; h < 4; h++) {
-        var pos = cellOf(s, G.horses[s][h], h);
+        var pos = cellOf(s, horsesSrc[s][h], h);
         var key = pos[0] + ',' + pos[1];
         if (!byCell[key]) byCell[key] = [];
         byCell[key].push({ seat: s, horse: h });
@@ -524,13 +545,22 @@
       cellEl.classList.add(list.length === 1 ? 'n1' : list.length === 2 ? 'n2' : list.length === 3 ? 'n3' : list.length === 4 ? 'n4' : 'nM');
       list.forEach(function (it) {
         var t = document.createElement('span');
-        t.className = 'horse' + (movableSet[it.seat + ':' + it.horse] ? (rollWindowOpen() ? ' movable-wait' : ' movable') : '');
+        var isMov = !!movableSet[it.seat + ':' + it.horse];
+        var cls = 'horse';
+        if (isMov) cls += rollWindowOpen() ? ' movable-wait' : ' movable';
+        // Bấm trực tiếp vào token để chọn ngựa: chỉ khi đã qua cửa sổ quan sát và không có animation
+        if (isMov && !rollWindowOpen() && !animLock) cls += ' clickable';
+        if (animDisplay && animDisplay.hopSeat === it.seat && animDisplay.hopHorse === it.horse) cls += ' hop';
+        t.className = cls;
+        t.setAttribute('data-seat', String(it.seat));
+        t.setAttribute('data-horse', String(it.horse));
         t.style.background = SEAT_COLORS[it.seat];
         t.textContent = '♞';
         t.addEventListener('click', function (ev) {
           if (ev && ev.stopPropagation) ev.stopPropagation();
           onHorseClick(it.seat, it.horse);
         });
+        tokenEls[it.seat + ':' + it.horse] = t;
         cellEl.appendChild(t);
       });
     });
@@ -610,10 +640,81 @@
     return canAct() && G && G.dice != null && !rollWindowOpen();
   }
 
+  // ================= Animation di chuyển ngựa =================
+  function clearAnimTimers() {
+    for (var i = 0; i < animTimers.length; i++) clearTimeout(animTimers[i]);
+    animTimers = [];
+  }
+  function animLater(fn, ms) { animTimers.push(setTimeout(fn, ms)); }
+
+  // Hủy animation đang chạy (khi nhận sync/start mới: nhảy thẳng tới trạng thái cuối)
+  function cancelAnimation() {
+    clearAnimTimers();
+    animDisplay = null;
+    animLock = false;
+  }
+
+  // Ngựa bị đá bay thẳng về ô chuồng của nó (cung bay ~0,5s)
+  function flyKickedHorses(kicked) {
+    kicked.forEach(function (k) {
+      var t = tokenEls[k.seat + ':' + k.horse];
+      if (!t || typeof t.getBoundingClientRect !== 'function') return;
+      var slot = STABLE_SLOTS[k.seat][k.horse];
+      var target = cells[slot[0]] && cells[slot[0]][slot[1]];
+      if (!target || typeof target.getBoundingClientRect !== 'function') return;
+      var a = t.getBoundingClientRect(), b = target.getBoundingClientRect();
+      var dx = (b.left + b.width / 2) - (a.left + a.width / 2);
+      var dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+      t.classList.add('flying');
+      t.style.transition = 'transform ' + (KICK_FLY_MS / 1000) + 's ease-in, opacity ' + (KICK_FLY_MS / 1000) + 's ease-in';
+      t.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(.45)';
+      t.style.opacity = '.25';
+    });
+  }
+
+  // Chiếu animation một nước đi trên MỌI máy (host, khách, khán giả, local):
+  // ngựa đi bước từng ô theo anim.path (mỗi ô ~180ms, có hiệu ứng nhảy), ngựa bị đá
+  // bay về chuồng sau khi ngựa đi chạm đất; xong mới render trạng thái cuối + trạng thái lượt.
+  // prevHorses: vị trí ngựa TRƯỚC nước đi (để bắt đầu animation từ đúng chỗ cũ).
+  function playMoveAnimation(anim, prevHorses, events) {
+    if (!anim || !anim.path || anim.path.length < 2 || !prevHorses) { renderAll(events); return; }
+    cancelAnimation();
+    animLock = true;
+    animDisplay = {
+      horses: prevHorses.map(function (row) { return row.slice(); }),
+      hopSeat: anim.seat, hopHorse: anim.horse
+    };
+    renderBoard();
+    var steps = anim.path.length - 1;
+    for (var i = 1; i <= steps; i++) {
+      (function (idx) {
+        animLater(function () {
+          if (!animDisplay) return;
+          animDisplay.horses[anim.seat][anim.horse] = anim.path[idx];
+          renderBoard();
+        }, idx * STEP_MS);
+      })(i);
+    }
+    animLater(function () {
+      if (!animDisplay) return;
+      animDisplay.hopSeat = -1; // ngựa đi đã chạm đất, hết hiệu ứng nhảy
+      if (anim.kicked && anim.kicked.length) {
+        flyKickedHorses(anim.kicked);
+        animLater(finishAnimation, KICK_FLY_MS + 80);
+      } else {
+        finishAnimation();
+      }
+    }, steps * STEP_MS + 70);
+    function finishAnimation() {
+      cancelAnimation();
+      renderAll(events); // trạng thái cuối + dòng trạng thái lượt kế tiếp chỉ hiện từ đây
+    }
+  }
+
   function renderDice() {
     // Nếu có kết quả đổ mà khối chưa trình diễn mặt đó (ví dụ nhận qua sync) thì đặt ngay đúng mặt
     if (G && G.dice != null && !diceAnimating && G.dice !== diceShown) snapDiceTo(G.dice);
-    var myTurn = canAct() && G && G.dice == null && seatConnected(G.turn);
+    var myTurn = canAct() && G && G.dice == null && seatConnected(G.turn) && !animLock;
     btnRoll.disabled = !myTurn;
     // Nút chọn ngựa cho các ngựa đi được — chỉ hiện sau khi cửa sổ quay + quan sát kết thúc
     moveBtnsEl.innerHTML = '';
@@ -743,6 +844,7 @@
   }
 
   function onHorseClick(seat, horse) {
+    if (animLock) return; // đang chiếu animation di chuyển: khóa thao tác
     if (!canAct()) return;
     if (rollWindowOpen()) return; // đang quay / đang trong 2s quan sát: chưa chọn ngựa được
     if (seat !== G.turn || G.dice == null) return;
@@ -751,6 +853,7 @@
   }
 
   function onCellClick(r, c) {
+    if (animLock) return; // đang chiếu animation di chuyển: khóa thao tác
     if (!canAct() || !G || G.dice == null) return;
     if (rollWindowOpen()) return;
     // Tìm ngựa đi được của người tới lượt đang đứng ở ô này
@@ -769,15 +872,19 @@
     G.movable = [];
   }
 
-  // Phát trạng thái chuẩn cho khách + khán giả (chỉ host online mới thực sự gửi)
-  function publishState(events) {
+  // Phát trạng thái chuẩn cho khách + khán giả (chỉ host online mới thực sự gửi).
+  // Khi có anim (nước đi vừa thực hiện): mọi máy cùng chiếu animation di chuyển
+  // trước khi hiển thị trạng thái cuối.
+  function publishState(events, anim, prevHorses) {
     if (online && isHost) {
-      broadcastAll({ type: 'state', state: G, events: events || [] });
+      broadcastAll({ type: 'state', state: G, events: events || [], anim: anim || null });
     }
-    renderAll(events);
+    if (anim) playMoveAnimation(anim, prevHorses, events || []);
+    else renderAll(events);
   }
 
   function doRoll() {
+    if (animLock) return; // đang chiếu animation nước trước: chưa đổ tiếp được
     if (!G || G.phase !== 'playing' || G.dice != null) return;
     var seat = G.turn;
     var value = 1 + Math.floor(Math.random() * 6);
@@ -801,11 +908,25 @@
 
   function doMove(seat, horse) {
     if (!G || G.phase !== 'playing' || G.dice == null) return;
+    if (animLock) return; // đang chiếu animation nước trước trên host: chưa nhận nước mới
     if (rollWindowOpen()) return; // host cũng phải chờ hết cửa sổ quay + quan sát của chính mình
     if (seat !== G.turn) return;
     if (G.movable.indexOf(horse) === -1) return;
     var value = G.dice;
+    // Chụp vị trí TRƯỚC nước đi + dựng payload animation: đường đi từng ô của ngựa vừa đi
+    // (ra quân: từ chuồng -1 tới ô 0) và danh sách ngựa bị đá (bay về chuồng).
+    var prevHorses = G.horses.map(function (row) { return row.slice(); });
+    var fromP = G.horses[seat][horse];
+    var np = fromP === -1 ? 0 : fromP + value;
+    var path = [];
+    if (fromP === -1) { path.push(-1); path.push(0); }
+    else for (var pp = fromP; pp <= np; pp++) path.push(pp);
     var events = applyMove(G, seat, horse, value);
+    var kicked = [];
+    events.forEach(function (ev) {
+      if (ev.type === 'kick') kicked.push({ seat: ev.victim, horse: ev.horse, from: ev.from });
+    });
+    var anim = { seat: seat, horse: horse, path: path, kicked: kicked };
     G.dice = null;
     G.movable = [];
     if (G.phase === 'over') {
@@ -816,7 +937,7 @@
     } else {
       advanceTurn();
     }
-    publishState(events);
+    publishState(events, anim, prevHorses);
   }
 
   function onGameOver(winnerSeat) {
@@ -833,6 +954,7 @@
 
   // Yêu cầu đổ xúc xắc (từ UI của trang này)
   function requestRoll() {
+    if (animLock) return; // đang chiếu animation di chuyển: chưa đổ tiếp được
     if (!G || G.phase !== 'playing' || G.dice != null) return;
     if (isAuthority) {
       if (online && G.turn !== mySeat) return; // host chỉ đổ cho lượt của chính mình
@@ -844,6 +966,7 @@
 
   // Yêu cầu đi một ngựa (từ UI của trang này)
   function requestMove(horse) {
+    if (animLock) return; // đang chiếu animation di chuyển: khóa thao tác
     if (!G || G.phase !== 'playing' || G.dice == null) return;
     if (rollWindowOpen()) return; // chưa hết cửa sổ quan sát: không gửi yêu cầu đi ngựa
     if (isAuthority) {
@@ -1238,11 +1361,13 @@
       renderAll();
     } else if (data.type === 'lobby-phase') {
       // Host đưa mọi người về sảnh chờ (sau khi ván kết thúc)
+      cancelAnimation();
       G = null;
       btnRematch.classList.add('hidden');
       renderAll();
       setStatus('Đã về sảnh chờ.', 'Mọi người bấm Sẵn sàng để bắt đầu ván mới — người đi trước sẽ luân phiên.');
     } else if (data.type === 'sync') {
+      cancelAnimation(); // vào lại / đồng bộ giữa chừng: nhảy thẳng tới trạng thái cuối, bỏ qua animation
       if (data.lobby) applyLobby(data.lobby);
       if (data.state) {
         G = data.state;
@@ -1250,6 +1375,7 @@
       }
       renderAll();
     } else if (data.type === 'start') {
+      cancelAnimation();
       G = data.state;
       everInGame = true;
       renderAll([{ type: 'start', seat: data.startSeat }]);
@@ -1258,8 +1384,12 @@
       beginRollWindow(data.value); // mọi máy cùng quay 3D + giữ ~2s quan sát, đồng bộ với host
       renderAll([{ type: 'rolled', seat: data.seat, value: data.value }]);
     } else if (data.type === 'state') {
+      // Chụp vị trí ngựa hiện tại (trước nước đi) để chiếu animation bước từng ô,
+      // rồi mới áp trạng thái cuối khi animation kết thúc.
+      var prevHorses = G && G.horses ? G.horses.map(function (row) { return row.slice(); }) : null;
       G = data.state;
-      renderAll(data.events || []);
+      if (data.anim && prevHorses) playMoveAnimation(data.anim, prevHorses, data.events || []);
+      else renderAll(data.events || []);
     }
   }
 
@@ -1365,18 +1495,21 @@
     }
   });
 
-  btnCopy.addEventListener('click', function () {
+  // Sao chép link mời (URL khách: có mã phòng, KHÔNG có tham số host) + phản hồi ngắn trên nút
+  function copyInviteLink(btn, label) {
     var link = shareLink();
     function done() {
-      btnCopy.textContent = 'Đã sao chép ✓';
-      setTimeout(function () { btnCopy.textContent = 'Sao chép link mời'; }, 2000);
+      btn.textContent = 'Đã sao chép ✓';
+      setTimeout(function () { btn.textContent = label; }, 2000);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link).then(done, function () { window.prompt('Sao chép link mời:', link); });
     } else {
       window.prompt('Sao chép link mời:', link);
     }
-  });
+  }
+  btnCopy.addEventListener('click', function () { copyInviteLink(btnCopy, 'Sao chép link mời'); });
+  if (btnLobbyCopy) btnLobbyCopy.addEventListener('click', function () { copyInviteLink(btnLobbyCopy, '📋 Sao chép link mời'); });
 
   btnChangeName.addEventListener('click', function () { openNameModal(); });
   btnNameDice.addEventListener('click', function () {
@@ -1447,6 +1580,8 @@
     getDiceShown: function () { return diceShown; },
     getDiceTransform: function () { return diceCubeEl.style.transform || ''; },
     getG: function () { return G; },
+    getAnimLock: function () { return animLock; },
+    STEP_MS: STEP_MS, KICK_FLY_MS: KICK_FLY_MS,
     getLobby: function () { return lobbyPlayers; },
     getMySeat: function () { return mySeat; },
     isSpectator: function () { return isSpectator; }
