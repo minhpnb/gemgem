@@ -1,0 +1,1631 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bắn Tàu — DuoGames</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="relay.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.5; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: #94a3b8; margin: 0 0 16px; }
+  .panel { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  #status { font-weight: 600; }
+  #statusSub, .small { font-weight: 400; color: #94a3b8; font-size: .95rem; }
+  .roomcode { font-size: 1.3rem; font-weight: 700; letter-spacing: 2px; color: #38bdf8; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  button, .btn { display: inline-block; padding: 9px 14px; background: #38bdf8; color: #082f49; border: none; border-radius: 8px; font-weight: 600; font-size: .95rem; cursor: pointer; text-decoration: none; }
+  button.secondary, .btn.secondary { background: #334155; color: #e2e8f0; }
+  button.danger { background: #7f1d1d; color: #fecaca; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .boards { display: flex; flex-wrap: wrap; gap: 16px; }
+  .boardBox { flex: 1 1 300px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 10px; }
+  .boardBox h3 { margin: 2px 0 8px; font-size: 1.02rem; }
+  .grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; width: 100%; max-width: 360px; margin: 0 auto; touch-action: manipulation; }
+  .cell { background: #0b2440; border: 1px solid #1e3a5f; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-weight: 800; cursor: pointer; padding: 0; aspect-ratio: 1; font-size: clamp(9px, 2.8vw, 16px); line-height: 1; user-select: none; -webkit-user-select: none; color: #e2e8f0; }
+  .cell:hover { border-color: #38bdf8; }
+  .cell.ship { background: #1d4ed8; border-color: #3b82f6; }
+  .cell.hit { background: #b45309; border-color: #f59e0b; }
+  .cell.sunk { background: #991b1b; border-color: #ef4444; }
+  .cell.miss { color: #64748b; }
+  .cell.preview { box-shadow: inset 0 0 0 2px #38bdf8; }
+  .cell.previewBad { box-shadow: inset 0 0 0 2px #ef4444; background: #450a0a; }
+  .caption { color: #94a3b8; font-size: .9rem; margin-top: 8px; min-height: 1.3em; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .chip { background: #334155; color: #e2e8f0; }
+  .chip.sel { box-shadow: 0 0 0 2px #facc15; background: #475569; }
+  .chip.done { opacity: .45; }
+  #btnPlaceReady { font-size: 1.05rem; padding: 11px 22px; }
+  .overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .82); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .overlay.hidden { display: none; }
+  .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 20px; max-width: 420px; width: 100%; text-align: center; }
+  .modal h2 { margin: 0 0 8px; font-size: 1.3rem; }
+  #endTitle { margin: 0 0 8px; }
+  #endReason { margin: 0 0 6px; }
+  #endScore { margin: 0 0 14px; font-weight: 600; color: #facc15; }
+  #coverTitle { font-size: 1.5rem; }
+  input[type="text"] { padding: 9px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; text-transform: uppercase; }
+  #nameInput { text-transform: none; }
+  .hidden { display: none; }
+  a { color: #38bdf8; }
+
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1><img class="title-logo" src="logo.svg" alt="gemgem">🚢 Bắn Tàu</h1>
+  <p class="sub">Bàn 10×10: xếp 5 tàu (tổng 17 ô) thật kín đáo, rồi thay nhau bắn — bắn trúng được bắn tiếp, chìm hết hạm đội đối thủ là thắng.</p>
+
+  <!-- Màn hình thiết lập khi mở trực tiếp không có tham số -->
+  <div id="setup" class="panel hidden">
+    <p><strong>Chơi online 2 người:</strong> tạo phòng để nhận mã phòng và link mời, hoặc nhập mã phòng của bạn bè để tham gia.</p>
+    <div class="toolbar">
+      <button id="btnCreate" type="button">Tạo phòng mới</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="joinCode" placeholder="Nhập mã phòng, ví dụ BAB12C" maxlength="8" size="18">
+      <button id="btnJoin" type="button" class="secondary">Vào phòng</button>
+    </div>
+    <div class="toolbar">
+      <a class="btn secondary" href="battleship.html?local=1">Chơi 2 người trên cùng máy</a>
+      <a class="btn secondary" href="index.html">Về trang chủ</a>
+    </div>
+  </div>
+
+  <!-- Thông tin phòng / chờ đối thủ -->
+  <div id="roomInfo" class="panel hidden">
+    <div>Mã phòng: <span class="roomcode" id="roomCodeText"></span></div>
+    <p id="shareText" style="margin:8px 0;">Gửi link mời này cho đối thủ:</p>
+    <div class="toolbar">
+      <button id="btnCopy" type="button">Sao chép link mời</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="status">Đang khởi tạo…</div>
+    <div id="statusSub" class="small"></div>
+    <div id="scoreLine" class="small hidden" style="margin-top:6px;font-weight:600;color:#facc15;"></div>
+    <div class="toolbar">
+      <button id="btnRestart" type="button" class="secondary">Ván mới</button>
+      <button id="btnResign" type="button" class="danger hidden">Xin thua</button>
+      <button id="btnChangeName" type="button" class="secondary">✏️ Đổi tên</button>
+      <a class="btn secondary" href="index.html">Về trang chủ</a>
+    </div>
+  </div>
+
+  <!-- Khu vực xếp tàu (chỉ hiện ở giai đoạn xếp tàu) -->
+  <div id="placePanel" class="panel hidden">
+    <div><strong>⚓ Xếp hạm đội của bạn</strong> — chọn một tàu trong danh sách rồi bấm vào ô trên bàn để đặt (ô bấm là đầu tàu, tàu kéo dài sang phải hoặc xuống dưới). Bấm vào tàu đã đặt để gỡ ra xếp lại. Tàu được chạm nhau, chỉ không được chồng lên nhau.</div>
+    <div id="shipList" class="chips"></div>
+    <div class="toolbar">
+      <button id="btnRotate" type="button" class="secondary">🔄 Xoay: Ngang</button>
+      <button id="btnRandomPlace" type="button" class="secondary">🎲 Xếp ngẫu nhiên</button>
+      <button id="btnClearPlace" type="button" class="secondary">🗑 Xếp lại</button>
+    </div>
+    <div id="placeStatus" class="small" style="margin:6px 0 10px;"></div>
+    <button id="btnPlaceReady" type="button" disabled>✅ Sẵn sàng</button>
+  </div>
+
+  <div class="boards">
+    <div class="boardBox" id="myBoardBox">
+      <h3 id="myBoardTitle">🚢 Hạm đội của bạn</h3>
+      <div id="myBoard" class="grid"></div>
+      <div id="myCaption" class="caption"></div>
+    </div>
+    <div class="boardBox hidden" id="targetBoardBox">
+      <h3 id="targetBoardTitle">🎯 Bàn mục tiêu</h3>
+      <div id="targetBoard" class="grid"></div>
+      <div id="targetCaption" class="caption"></div>
+    </div>
+  </div>
+</main>
+
+  <!-- Popup thông báo kết thúc ván -->
+  <div id="endOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="endTitle">🏆 Thắng!</h2>
+      <p id="endReason"></p>
+      <p id="endScore"></p>
+      <div class="toolbar" style="justify-content:center;">
+        <button id="btnEndRematch" type="button">Ván mới</button>
+        <button id="btnEndClose" type="button" class="secondary">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Màn che chuyền máy (chế độ cùng máy) -->
+  <div id="coverOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="coverTitle">Đưa máy cho Người chơi 1</h2>
+      <p id="coverText"></p>
+      <button id="btnCover" type="button">Mở bàn của tôi</button>
+    </div>
+  </div>
+
+  <!-- Popup nhập tên hiển thị (lần đầu truy cập / khi bấm Đổi tên) -->
+  <div id="nameOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2>👤 Tên của bạn</h2>
+      <p>Nhập tên hiển thị khi chơi online. Tên được lưu vĩnh viễn trên trình duyệt này.</p>
+      <div class="toolbar" style="justify-content:center;">
+        <input type="text" id="nameInput" placeholder="Tên của bạn" maxlength="24" size="22">
+      </div>
+      <div class="toolbar" style="justify-content:center;">
+        <button id="btnNameDice" type="button" class="secondary">🎲 Tên ngẫu nhiên</button>
+        <button id="btnNameSave" type="button">Lưu tên</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var N = 10; // bàn 10x10
+  var TOTAL_CELLS = 17; // tổng số ô tàu của mỗi hạm đội
+  var SHIPS = [
+    { name: 'Tàu sân bay', size: 5 },
+    { name: 'Thiết giáp hạm', size: 4 },
+    { name: 'Tàu ngầm', size: 3 },
+    { name: 'Tàu khu trục', size: 3 },
+    { name: 'Tàu tuần tra', size: 2 }
+  ];
+  var COLS = 'ABCDEFGHIJ';
+
+  var params = new URLSearchParams(location.search);
+  var roomCode = (params.get('room') || '').toUpperCase();
+  var isHost = params.get('host') === '1';
+  var isLocal = params.get('local') === '1';
+  var online = !isLocal && !!roomCode;
+
+  // ---------- Phần tử DOM ----------
+  var statusEl = document.getElementById('status');
+  var statusSubEl = document.getElementById('statusSub');
+  var scoreEl = document.getElementById('scoreLine');
+  var roomInfoEl = document.getElementById('roomInfo');
+  var roomCodeText = document.getElementById('roomCodeText');
+  var btnCopy = document.getElementById('btnCopy');
+  var setupEl = document.getElementById('setup');
+  var btnRestart = document.getElementById('btnRestart');
+  var btnResign = document.getElementById('btnResign');
+  var btnChangeName = document.getElementById('btnChangeName');
+  var placePanel = document.getElementById('placePanel');
+  var shipListEl = document.getElementById('shipList');
+  var btnRotate = document.getElementById('btnRotate');
+  var btnRandomPlace = document.getElementById('btnRandomPlace');
+  var btnClearPlace = document.getElementById('btnClearPlace');
+  var btnPlaceReady = document.getElementById('btnPlaceReady');
+  var placeStatusEl = document.getElementById('placeStatus');
+  var myBoardBox = document.getElementById('myBoardBox');
+  var targetBoardBox = document.getElementById('targetBoardBox');
+  var myBoardEl = document.getElementById('myBoard');
+  var targetBoardEl = document.getElementById('targetBoard');
+  var myBoardTitle = document.getElementById('myBoardTitle');
+  var targetBoardTitle = document.getElementById('targetBoardTitle');
+  var myCaptionEl = document.getElementById('myCaption');
+  var targetCaptionEl = document.getElementById('targetCaption');
+  var endOverlay = document.getElementById('endOverlay');
+  var endTitleEl = document.getElementById('endTitle');
+  var endReasonEl = document.getElementById('endReason');
+  var endScoreEl = document.getElementById('endScore');
+  var btnEndRematch = document.getElementById('btnEndRematch');
+  var btnEndClose = document.getElementById('btnEndClose');
+  var coverOverlay = document.getElementById('coverOverlay');
+  var coverTitleEl = document.getElementById('coverTitle');
+  var coverTextEl = document.getElementById('coverText');
+  var btnCover = document.getElementById('btnCover');
+  var nameOverlay = document.getElementById('nameOverlay');
+  var nameInput = document.getElementById('nameInput');
+  var btnNameDice = document.getElementById('btnNameDice');
+  var btnNameSave = document.getElementById('btnNameSave');
+
+  function setStatus(main, sub) {
+    statusEl.textContent = main;
+    statusSubEl.textContent = sub || '';
+  }
+  function cellLabel(r, c) { return COLS.charAt(c) + (r + 1); }
+
+  // ---------- Tên hiển thị (hồ sơ vĩnh viễn, key 'duo-profile') ----------
+  var myName = '', oppName = '', specNameHost = '', specNameGuest = '', nameGenerated = '';
+  function sanitizeName(s) { return String(s == null ? '' : s).trim().slice(0, 24); }
+  var NAME_ANIMALS = ['Chó', 'Mèo', 'Rùa', 'Gà', 'Vịt', 'Cá', 'Khỉ', 'Hổ', 'Thỏ', 'Heo', 'Bò', 'Dê', 'Ngựa', 'Chim', 'Ếch', 'Gấu'];
+  var NAME_DESCS = ['Đỏ', 'Xấu', 'Xanh', 'Nhanh', 'Lười', 'Béo', 'Dữ', 'Hiền', 'Ngầu', 'Khôn', 'Lém', 'Vui', 'Cao', 'Lạnh', 'Tếu', 'Gầy'];
+  function genRandomName() {
+    var a = NAME_ANIMALS[Math.floor(Math.random() * NAME_ANIMALS.length)];
+    var d = NAME_DESCS[Math.floor(Math.random() * NAME_DESCS.length)];
+    return a + ' ' + d + ' ' + (1 + Math.floor(Math.random() * 99));
+  }
+  function loadProfile() {
+    try {
+      var raw = localStorage.getItem('duo-profile');
+      if (!raw) return '';
+      var p = JSON.parse(raw);
+      return sanitizeName(p && p.name);
+    } catch (e) { return ''; }
+  }
+  function saveProfile() {
+    try { localStorage.setItem('duo-profile', JSON.stringify({ name: myName })); } catch (e) { /* bỏ qua */ }
+  }
+  function dispMy() { return myName || 'Bạn'; }
+  function dispOpp() { return oppName || 'Đối thủ'; }
+  function namesPayload() { return { host: isHost ? myName : oppName, guest: isHost ? oppName : myName }; }
+  function nameOfRole(role) {
+    if (isSpectator) return role === 'host' ? (specNameHost || 'Chủ phòng') : (specNameGuest || 'Khách');
+    return role === myRole() ? dispMy() : dispOpp();
+  }
+  function openNameModal() {
+    nameGenerated = myName || genRandomName();
+    nameInput.value = nameGenerated;
+    nameOverlay.classList.remove('hidden');
+  }
+  function saveNameFromModal() {
+    var v = sanitizeName(nameInput.value);
+    if (!v) v = nameGenerated || genRandomName();
+    myName = v;
+    saveProfile();
+    nameOverlay.classList.add('hidden');
+    updateScoreUI();
+    updatePlaceUI();
+    announceName();
+  }
+  function announceName() {
+    if (!online || isSpectator) return;
+    if (connected) sendMsg({ type: 'name', name: myName });
+    if (isHost) broadcastToSpectators({ type: 'names', names: namesPayload() });
+  }
+
+  // ---------- Hạm đội: biểu diễn & kiểm tra hợp lệ ----------
+  // Một cách xếp tàu: fleet[i] = null | { r, c, dir: 'h'|'v' } (ô neo + hướng)
+  function emptyFleet() { return [null, null, null, null, null]; }
+  function cellsOf(pl, size) {
+    var out = [];
+    for (var i = 0; i < size; i++) out.push(pl.dir === 'h' ? [pl.r, pl.c + i] : [pl.r + i, pl.c]);
+    return out;
+  }
+  function fleetGrid(fleet, exceptIdx) {
+    var g = [], r, c;
+    for (r = 0; r < N; r++) { var row = []; for (c = 0; c < N; c++) row.push(-1); g.push(row); }
+    fleet.forEach(function (pl, idx) {
+      if (!pl || idx === exceptIdx) return;
+      cellsOf(pl, SHIPS[idx].size).forEach(function (cell) { g[cell[0]][cell[1]] = idx; });
+    });
+    return g;
+  }
+  function canPlace(fleet, idx, r, c, dir) {
+    var cells = cellsOf({ r: r, c: c, dir: dir }, SHIPS[idx].size);
+    var grid = fleetGrid(fleet, idx);
+    for (var i = 0; i < cells.length; i++) {
+      var rr = cells[i][0], cc = cells[i][1];
+      if (rr < 0 || cc < 0 || rr >= N || cc >= N) return false; // ra ngoài bàn
+      if (grid[rr][cc] !== -1) return false; // chồng lên tàu khác (chạm nhau thì được)
+    }
+    return true;
+  }
+  function fleetComplete(fleet) {
+    for (var i = 0; i < SHIPS.length; i++) if (!fleet[i]) return false;
+    return true;
+  }
+  function serializeFleet(fleet) {
+    return fleet.map(function (pl, i) {
+      return pl ? { name: SHIPS[i].name, size: SHIPS[i].size, r: pl.r, c: pl.c, dir: pl.dir } : null;
+    });
+  }
+  function randomFleet() {
+    for (var attempt = 0; attempt < 300; attempt++) {
+      var f = emptyFleet(), ok = true;
+      for (var i = 0; i < SHIPS.length; i++) {
+        var placed = false;
+        for (var t = 0; t < 400 && !placed; t++) {
+          var dir = Math.random() < 0.5 ? 'h' : 'v';
+          var r = Math.floor(Math.random() * N), c = Math.floor(Math.random() * N);
+          if (canPlace(f, i, r, c, dir)) { f[i] = { r: r, c: c, dir: dir }; placed = true; }
+        }
+        if (!placed) { ok = false; break; }
+      }
+      if (ok) return f;
+    }
+    return f;
+  }
+  // Tàu idx đã chìm chưa (mọi ô của tàu đều bị bắn trúng trong lưới taken)
+  function shipSunk(fleet, taken, idx) {
+    if (!fleet[idx]) return false;
+    var cells = cellsOf(fleet[idx], SHIPS[idx].size);
+    for (var i = 0; i < cells.length; i++) if (taken[cells[i][0]][cells[i][1]] !== 'hit') return false;
+    return true;
+  }
+  function emptyGrid() {
+    var g = [], r, c;
+    for (r = 0; r < N; r++) { var row = []; for (c = 0; c < N; c++) row.push(''); g.push(row); }
+    return g;
+  }
+  function countGrid(grid, val) {
+    var n = 0;
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) if (grid[r][c] === val) n++;
+    return n;
+  }
+
+  // ---------- Trạng thái ván (online, góc nhìn của trang này) ----------
+  var phase = 'placing';       // 'placing' | 'battle' | 'over'
+  var myFleet = emptyFleet();
+  var myShotsTaken = emptyGrid();  // đối thủ bắn vào bàn của mình: '' | 'miss' | 'hit'
+  var myShotsFired = emptyGrid();  // mình bắn sang bàn đối thủ
+  var mySunkOppCells = {};         // "r,c" -> true: các ô thuộc tàu đối thủ đã chìm (biết qua result)
+  var mySunkOppNames = [];         // tên các tàu đối thủ mình đã đánh chìm
+  var turn = null;                 // 'me' | 'opp' | null
+  var pendingShot = null;          // { r, c } phát bắn của mình đang chờ kết quả
+  var gameOver = false;
+  var winnerRole = null;           // 'host' | 'guest' | null
+  var endReason = null;            // 'sunk' | 'resign'
+  var revealedOppFleet = null;     // hạm đội đối thủ (chỉ lộ khi ván kết thúc)
+  var lastResult = null;           // kết quả phát bắn gần nhất (debug/kiểm thử)
+  var myPlacedReady = false;
+  var oppPlacedReady = false;
+  var hostFirst = true;            // ván hiện tại: chủ phòng bắn trước?
+  var gamesStarted = 0;            // (chỉ host dùng) số ván đã bắt đầu trong trận
+  var lastHostFirst = null;        // (chỉ host dùng) người bắn trước của ván trước
+  var gameToken = null;
+  var score = { host: 0, guest: 0 };
+  var scoreCounted = false;
+  var matchActive = false;         // ván đã vào giai đoạn bắn (người vào lại chỉ được xem)
+
+  // Phía host: nhật ký phát bắn của cả hai (để đồng bộ cho khán giả vào sau)
+  var shotLog = { host: [], guest: [] };
+  var guestFleetLayout = null;     // hạm đội khách (host chỉ biết khi nhận 'reveal' lúc hết ván)
+
+  // ---------- Trạng thái khán giả ----------
+  var isSpectator = false;
+  var specPhase = 'placing';
+  var specShots = { host: emptyGrid(), guest: emptyGrid() };
+  var specSunkCells = { host: {}, guest: {} };
+  var specPlaced = { host: false, guest: false };
+  var specTurnRole = null;
+  var specFleets = null;
+
+  // ---------- Trạng thái xếp tàu (dùng chung online & local) ----------
+  var editFleet = myFleet;   // hạm đội đang sửa (online: myFleet; local: fleets[placingFor])
+  var selShip = 0;           // tàu đang chọn trong danh sách
+  var orient = 'h';
+  var placeLocked = false;   // đã bấm Sẵn sàng → khóa bàn xếp
+  var previewCells = null;   // các ô đang tô xem trước khi di chuột
+
+  // ---------- Trạng thái local (2 người cùng máy) ----------
+  var L = null; // { fleets:[f0,f1], shots:[g0,g1], cur:0, placingFor:0, phase:'cover'|'placing'|'battle'|'over', first:0, games:0, winner:null }
+  var coverNext = null; // { player: 0|1, kind: 'place'|'battle' }
+
+  function myRole() { return isHost ? 'host' : 'guest'; }
+  function oppRole() { return isHost ? 'guest' : 'host'; }
+  function turnRole() {
+    if (turn === 'me') return myRole();
+    if (turn === 'opp') return oppRole();
+    return null;
+  }
+
+  // ---------- Dựng bàn cờ ----------
+  var myCells = [], targetCells = [], chipEls = [];
+  function buildGrid(el, onClick) {
+    el.innerHTML = '';
+    var grid = [];
+    for (var r = 0; r < N; r++) {
+      var rowEls = [];
+      for (var c = 0; c < N; c++) {
+        (function (rr, cc) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'cell';
+          b.setAttribute('aria-label', 'Ô ' + cellLabel(rr, cc));
+          b.addEventListener('click', function () { onClick(rr, cc); });
+          b.addEventListener('mouseenter', function () { onCellHover(rr, cc); });
+          el.appendChild(b);
+          rowEls.push(b);
+        })(r, c);
+      }
+      grid.push(rowEls);
+    }
+    return grid;
+  }
+  function paintCell(el, kind, glyph) {
+    el.className = 'cell' + (kind ? ' ' + kind : '');
+    el.textContent = glyph || '';
+  }
+
+  // ---------- Vẽ bàn ----------
+  // Bàn của mình trong giai đoạn xếp tàu
+  function renderPlaceBoard() {
+    var grid = fleetGrid(editFleet);
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      paintCell(myCells[r][c], grid[r][c] >= 0 ? 'ship' : '', '');
+    }
+    myCaptionEl.textContent = 'Đã đặt ' + editFleet.filter(Boolean).length + '/5 tàu (' +
+      editFleet.reduce(function (s, pl, i) { return s + (pl ? SHIPS[i].size : 0); }, 0) + '/17 ô).';
+    applyPreviewPaint();
+  }
+  // Bàn của một người chơi trong giai đoạn bắn: hạm đội + các phát bắn phải nhận
+  function paintFleetBoard(cells, fleet, taken) {
+    var grid = fleetGrid(fleet);
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      var idx = grid[r][c], t = taken[r][c];
+      if (t === 'hit') paintCell(cells[r][c], shipSunk(fleet, taken, idx) ? 'sunk' : 'hit', '💥');
+      else if (t === 'miss') paintCell(cells[r][c], 'miss', '✕');
+      else if (idx >= 0) paintCell(cells[r][c], 'ship', '');
+      else paintCell(cells[r][c], '', '');
+    }
+  }
+  // Bàn mục tiêu: các phát bắn của một người + tàu chìm đã biết + (hết ván) tàu lộ diện
+  function paintTargetBoard(cells, fired, sunkCells, revealFleet) {
+    var revealGrid = revealFleet ? fleetGrid(revealFleet.map(function (s) { return s ? { r: s.r, c: s.c, dir: s.dir } : null; })) : null;
+    for (var r = 0; r < N; r++) for (var c = 0; c < N; c++) {
+      var f = fired[r][c];
+      if (f === 'hit') paintCell(cells[r][c], sunkCells[r + ',' + c] ? 'sunk' : 'hit', '💥');
+      else if (f === 'miss') paintCell(cells[r][c], 'miss', '✕');
+      else if (revealGrid && revealGrid[r][c] >= 0) paintCell(cells[r][c], 'ship', '🚢');
+      else paintCell(cells[r][c], '', '');
+    }
+  }
+  function renderPlayerBoards() {
+    paintFleetBoard(myCells, myFleet, myShotsTaken);
+    paintTargetBoard(targetCells, myShotsFired, mySunkOppCells, gameOver ? revealedOppFleet : null);
+    var hitsTaken = countGrid(myShotsTaken, 'hit');
+    var shotsByMe = countGrid(myShotsFired, 'hit') + countGrid(myShotsFired, 'miss');
+    myCaptionEl.textContent = 'Đối thủ đã bắn trúng ' + hitsTaken + '/17 ô tàu của bạn.';
+    targetCaptionEl.textContent = 'Bạn đã bắn ' + shotsByMe + ' phát — trúng ' + countGrid(myShotsFired, 'hit') +
+      ', đã chìm ' + mySunkOppNames.length + '/5 tàu đối thủ.';
+  }
+  function renderSpecBoards() {
+    paintTargetBoard(myCells, specShots.host, specSunkCells.host, specFleets ? specFleets.host : null);
+    paintTargetBoard(targetCells, specShots.guest, specSunkCells.guest, specFleets ? specFleets.guest : null);
+    myCaptionEl.textContent = nameOfRole('host') + ' đã bắn trúng ' + countGrid(specShots.host, 'hit') + '/17 ô.';
+    targetCaptionEl.textContent = nameOfRole('guest') + ' đã bắn trúng ' + countGrid(specShots.guest, 'hit') + '/17 ô.';
+  }
+  function renderBoards() {
+    if (isSpectator) { renderSpecBoards(); return; }
+    if (isLocal) { renderLocalBoards(); return; }
+    if (phase === 'placing') renderPlaceBoard(); else renderPlayerBoards();
+  }
+
+  // ---------- Xếp tàu: tương tác ----------
+  function nextUnplaced() {
+    for (var i = 0; i < SHIPS.length; i++) if (!editFleet[i]) return i;
+    return -1;
+  }
+  function renderShipList() {
+    shipListEl.innerHTML = '';
+    chipEls = [];
+    SHIPS.forEach(function (s, i) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip' + (editFleet[i] ? ' done' : '') + (selShip === i ? ' sel' : '');
+      b.textContent = s.name + ' (' + s.size + ' ô)' + (editFleet[i] ? ' ✓' : '');
+      b.disabled = placeLocked;
+      b.addEventListener('click', function () {
+        if (placeLocked || editFleet[i]) return;
+        selShip = i;
+        clearPreview();
+        renderShipList();
+        renderBoards();
+      });
+      shipListEl.appendChild(b);
+      chipEls.push(b);
+    });
+  }
+  function clearPreview() {
+    if (!previewCells) return;
+    previewCells.forEach(function (cell) {
+      myCells[cell[0]][cell[1]].classList.remove('preview');
+      myCells[cell[0]][cell[1]].classList.remove('previewBad');
+    });
+    previewCells = null;
+  }
+  function applyPreviewPaint() {
+    if (!previewCells) return;
+    var ok = previewCells.ok;
+    previewCells.cells.forEach(function (cell) {
+      if (cell[0] < 0 || cell[1] < 0 || cell[0] >= N || cell[1] >= N) return;
+      myCells[cell[0]][cell[1]].classList.add(ok ? 'preview' : 'previewBad');
+    });
+  }
+  function onCellHover(r, c) {
+    if (isSpectator || phase !== 'placing' || placeLocked || selShip < 0 || editFleet[selShip]) { clearPreview(); return; }
+    clearPreview();
+    var cells = cellsOf({ r: r, c: c, dir: orient }, SHIPS[selShip].size);
+    previewCells = { cells: cells, ok: canPlace(editFleet, selShip, r, c, orient) };
+    applyPreviewPaint();
+  }
+  function afterPlaceChange() {
+    renderShipList();
+    renderBoards();
+    updatePlaceUI();
+  }
+  function setEditFleet(f) {
+    editFleet = f;
+    if (isLocal) L.fleets[L.placingFor] = f;
+    else myFleet = f;
+  }
+  function onMyCellClick(r, c) {
+    if (isSpectator) return;
+    if (isLocal) { localPlaceClick(r, c); return; }
+    if (phase !== 'placing' || placeLocked) return;
+    var grid = fleetGrid(editFleet);
+    var idx = grid[r][c];
+    clearPreview();
+    if (idx >= 0) { // bấm vào tàu đã đặt → gỡ ra
+      editFleet[idx] = null;
+      selShip = idx;
+      afterPlaceChange();
+      return;
+    }
+    if (selShip < 0 || editFleet[selShip]) return;
+    if (!canPlace(editFleet, selShip, r, c, orient)) return; // ngoài bàn / chồng tàu: bỏ qua
+    editFleet[selShip] = { r: r, c: c, dir: orient };
+    selShip = nextUnplaced();
+    afterPlaceChange();
+  }
+  function updatePlaceUI() {
+    if (isSpectator) return;
+    var complete = fleetComplete(editFleet);
+    btnPlaceReady.disabled = !complete || placeLocked;
+    btnPlaceReady.textContent = placeLocked ? '✅ Đã sẵn sàng — chờ đối thủ…' : '✅ Sẵn sàng';
+    btnRotate.disabled = placeLocked;
+    btnRandomPlace.disabled = placeLocked;
+    btnClearPlace.disabled = placeLocked;
+    if (isLocal) {
+      placeStatusEl.textContent = 'Người chơi ' + (L.placingFor + 1) + ' đang xếp tàu: đã đặt ' +
+        editFleet.filter(Boolean).length + '/5 tàu.';
+      return;
+    }
+    var mine = myPlacedReady ? (dispMy() + ': đã sẵn sàng ✓') : (dispMy() + ': đang xếp tàu…');
+    var theirs = !connected ? 'Đối thủ: chưa vào phòng' :
+      (oppPlacedReady ? (dispOpp() + ': đã sẵn sàng ✓') : (dispOpp() + ': đang xếp tàu…'));
+    placeStatusEl.textContent = mine + ' • ' + theirs;
+  }
+
+  // ---------- Tỉ số & popup kết thúc ván ----------
+  function updateScoreUI() {
+    if (!online) { scoreEl.classList.add('hidden'); return; }
+    scoreEl.classList.remove('hidden');
+    if (isSpectator) {
+      scoreEl.textContent = 'Tỉ số — ' + (specNameHost || 'Chủ phòng') + ' ' + score.host + ' : ' + score.guest + ' ' + (specNameGuest || 'Khách');
+    } else {
+      var mine = isHost ? score.host : score.guest;
+      var theirs = isHost ? score.guest : score.host;
+      scoreEl.textContent = 'Tỉ số — ' + dispMy() + ' ' + mine + ' : ' + theirs + ' ' + dispOpp();
+    }
+  }
+  function countScore(wRole) {
+    if (!online || scoreCounted) return;
+    scoreCounted = true;
+    score[wRole]++;
+    updateScoreUI();
+  }
+
+  var endPopupKey = null, endPopupDismissed = false;
+  function hideEndPopup() {
+    endOverlay.classList.add('hidden');
+    endPopupKey = null;
+    endPopupDismissed = false;
+  }
+  function syncEndPopup() {
+    var over = isLocal ? (L && L.phase === 'over') : gameOver;
+    if (!over) {
+      if (endPopupKey !== null || !endOverlay.classList.contains('hidden')) hideEndPopup();
+      return;
+    }
+    var wName, lName, key;
+    if (isLocal) {
+      wName = 'Người chơi ' + (L.winner + 1);
+      lName = 'Người chơi ' + ((1 - L.winner) + 1);
+      key = 'local' + L.games + '|' + L.winner;
+    } else {
+      wName = nameOfRole(winnerRole);
+      lName = nameOfRole(winnerRole === 'host' ? 'guest' : 'host');
+      key = (gameToken || 'g') + '|' + winnerRole;
+    }
+    if (key !== endPopupKey) { endPopupKey = key; endPopupDismissed = false; }
+    if (endPopupDismissed) return;
+    endTitleEl.textContent = '🏆 ' + wName + ' thắng!';
+    endReasonEl.textContent = endReason === 'resign'
+      ? (lName + ' đã xin thua.')
+      : ('Đã đánh chìm toàn bộ hạm đội của ' + lName + '!');
+    var sc = online ? scoreEl.textContent : '';
+    endScoreEl.textContent = sc;
+    endScoreEl.style.display = sc ? '' : 'none';
+    btnEndRematch.style.display = isSpectator ? 'none' : '';
+    endOverlay.classList.remove('hidden');
+  }
+  btnEndClose.addEventListener('click', function () { endPopupDismissed = true; endOverlay.classList.add('hidden'); });
+  btnEndRematch.addEventListener('click', function () { btnRestart.click(); });
+
+  // ---------- Luồng ván đấu (online) ----------
+  function genToken() {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    var t = '';
+    for (var i = 0; i < 10; i++) t += chars.charAt(Math.floor(Math.random() * chars.length));
+    return t;
+  }
+  function refreshPlacingStatus() {
+    if (isSpectator || phase !== 'placing') return;
+    if (!connected) {
+      setStatus(isHost ? 'Đang chờ đối thủ vào phòng…' : 'Đang kết nối tới phòng…', 'Bạn có thể xếp hạm đội trước trong lúc chờ.');
+    } else {
+      setStatus('⚓ Xếp hạm đội của bạn', 'Đối thủ không nhìn thấy cách xếp tàu của bạn. Cả hai cùng sẵn sàng thì ván bắt đầu.');
+    }
+  }
+  function maybeStartBattle() {
+    if (!isHost || phase !== 'placing') return;
+    if (!myPlacedReady || !oppPlacedReady || !playerConn) return;
+    // Chủ phòng quyết định người bắn trước: ván đầu bốc thăm, ván sau luân phiên
+    hostFirst = gamesStarted === 0 ? (Math.random() < 0.5) : !lastHostFirst;
+    lastHostFirst = hostFirst;
+    gamesStarted++;
+    gameToken = genToken();
+    scoreCounted = false;
+    var msg = { type: 'start', hostFirst: hostFirst, token: gameToken, score: score, names: namesPayload() };
+    sendMsg(msg);
+    broadcastToSpectators(msg);
+    beginBattle();
+  }
+  function beginBattle() {
+    phase = 'battle';
+    matchActive = true;
+    myShotsTaken = emptyGrid();
+    myShotsFired = emptyGrid();
+    mySunkOppCells = {};
+    mySunkOppNames = [];
+    pendingShot = null;
+    gameOver = false;
+    winnerRole = null;
+    endReason = null;
+    revealedOppFleet = null;
+    turn = (hostFirst === isHost) ? 'me' : 'opp';
+    placePanel.classList.add('hidden');
+    targetBoardBox.classList.remove('hidden');
+    if (!isSpectator) btnResign.classList.remove('hidden');
+    hideEndPopup();
+    renderBoards();
+    updateBattleStatus();
+  }
+  function updateBattleStatus() {
+    if (gameOver || isSpectator) return;
+    if (turn === 'me') {
+      setStatus('🎯 Lượt của bạn!', 'Bấm vào một ô trên bàn mục tiêu để bắn. Bắn trúng được bắn tiếp, bắn trượt mất lượt.');
+    } else {
+      setStatus('Chờ ' + dispOpp() + ' bắn…', dispOpp() + ' đang ngắm bắn vào hạm đội của bạn.');
+    }
+  }
+  function fireShot(r, c) {
+    if (phase !== 'battle' || gameOver || turn !== 'me' || pendingShot) return;
+    if (myShotsFired[r][c] !== '') return;
+    pendingShot = { r: r, c: c };
+    sendMsg({ type: 'shot', r: r, c: c });
+    setStatus('Đã bắn ô ' + cellLabel(r, c) + '…', 'Đang chờ kết quả từ ' + dispOpp() + '.');
+  }
+  // Phía phòng thủ: nhận phát bắn, tự tính kết quả trên hạm đội của mình
+  function handleShot(data) {
+    var r = data.r, c = data.c;
+    if (phase !== 'battle' || gameOver) return;
+    if (turn !== 'opp') return; // bắn trái lượt → bỏ qua
+    if (typeof r !== 'number' || typeof c !== 'number' || r < 0 || c < 0 || r >= N || c >= N) return;
+    if (myShotsTaken[r][c] !== '') return; // ô này đã bị bắn rồi
+    var grid = fleetGrid(myFleet);
+    var idx = grid[r][c];
+    var hit = idx >= 0;
+    myShotsTaken[r][c] = hit ? 'hit' : 'miss';
+    var sunkName = null, sunkCells = null;
+    if (hit && shipSunk(myFleet, myShotsTaken, idx)) {
+      sunkName = SHIPS[idx].name;
+      sunkCells = cellsOf(myFleet[idx], SHIPS[idx].size);
+    }
+    var win = countGrid(myShotsTaken, 'hit') >= TOTAL_CELLS;
+    var result = { type: 'result', r: r, c: c, hit: hit, sunk: sunkName, sunkCells: sunkCells, win: win };
+    lastResult = result;
+    sendMsg(result);
+    if (isHost) { // ghi nhật ký + chuyển tiếp cho khán giả
+      shotLog[oppRole()].push({ r: r, c: c, hit: hit, sunk: sunkName, sunkCells: sunkCells });
+      broadcastToSpectators({ type: 'shot', by: oppRole(), r: r, c: c });
+      broadcastToSpectators({ type: 'result', by: oppRole(), r: r, c: c, hit: hit, sunk: sunkName, sunkCells: sunkCells, win: win });
+    }
+    if (win) { endGame(oppRole(), 'sunk'); return; }
+    renderBoards();
+    if (hit) {
+      setStatus('💥 Tàu của bạn bị bắn trúng ô ' + cellLabel(r, c) + (sunkName ? ' — ' + sunkName + ' đã chìm!' : '!'), dispOpp() + ' được bắn tiếp.');
+    } else {
+      turn = 'me';
+      setStatus('✕ ' + dispOpp() + ' bắn trượt ô ' + cellLabel(r, c) + '.', 'Đến lượt bạn bắn.');
+    }
+  }
+  // Phía tấn công: nhận kết quả cho phát bắn của mình
+  function handleResult(data) {
+    if (phase !== 'battle' || gameOver) return;
+    if (turn !== 'me' || !pendingShot || pendingShot.r !== data.r || pendingShot.c !== data.c) return;
+    var r = data.r, c = data.c;
+    pendingShot = null;
+    myShotsFired[r][c] = data.hit ? 'hit' : 'miss';
+    if (data.sunk && data.sunkCells) {
+      mySunkOppNames.push(data.sunk);
+      data.sunkCells.forEach(function (cell) { mySunkOppCells[cell[0] + ',' + cell[1]] = true; });
+    }
+    lastResult = data;
+    if (isHost) { // ghi nhật ký + chuyển tiếp cặp bắn/kết quả cho khán giả
+      shotLog[myRole()].push({ r: r, c: c, hit: !!data.hit, sunk: data.sunk || null, sunkCells: data.sunkCells || null });
+      broadcastToSpectators({ type: 'shot', by: myRole(), r: r, c: c });
+      broadcastToSpectators({ type: 'result', by: myRole(), r: r, c: c, hit: !!data.hit, sunk: data.sunk || null, sunkCells: data.sunkCells || null, win: !!data.win });
+    }
+    if (data.win) { endGame(myRole(), 'sunk'); return; }
+    renderBoards();
+    if (data.hit) {
+      setStatus('💥 Trúng ô ' + cellLabel(r, c) + '!' + (data.sunk ? ' Đã chìm ' + data.sunk + '!' : ''), 'Bạn được bắn tiếp — chọn ô tiếp theo trên bàn mục tiêu.');
+    } else {
+      turn = 'opp';
+      setStatus('✕ Trượt ô ' + cellLabel(r, c) + '.', 'Mất lượt — chờ ' + dispOpp() + ' bắn.');
+    }
+  }
+  function endGame(wRole, reason) {
+    if (gameOver) return;
+    gameOver = true;
+    winnerRole = wRole;
+    endReason = reason;
+    phase = 'over';
+    countScore(wRole);
+    // Hết ván: hai phía gửi hạm đội của mình cho nhau (bên thắng xem tàu còn lại
+    // của bên thua; khán giả cũng nhận qua host) — trước đó vị trí tàu là bí mật.
+    sendMsg({ type: 'reveal', fleet: serializeFleet(myFleet) });
+    if (isHost) broadcastToSpectators({ type: 'reveal', by: 'host', fleet: serializeFleet(myFleet) });
+    renderBoards();
+    if (wRole === myRole()) setStatus('🎉 ' + dispMy() + ' thắng!', 'Bấm "Ván mới" để chơi lại.');
+    else setStatus(dispOpp() + ' thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
+    syncEndPopup();
+  }
+  function resetGame() {
+    hideEndPopup();
+    myFleet = emptyFleet();
+    editFleet = myFleet;
+    myShotsTaken = emptyGrid();
+    myShotsFired = emptyGrid();
+    mySunkOppCells = {};
+    mySunkOppNames = [];
+    pendingShot = null;
+    turn = null;
+    gameOver = false;
+    winnerRole = null;
+    endReason = null;
+    revealedOppFleet = null;
+    myPlacedReady = false;
+    oppPlacedReady = false;
+    placeLocked = false;
+    phase = 'placing';
+    matchActive = false;
+    scoreCounted = false;
+    selShip = 0;
+    orient = 'h';
+    btnRotate.textContent = '🔄 Xoay: Ngang';
+    if (isHost) { shotLog = { host: [], guest: [] }; guestFleetLayout = null; }
+    placePanel.classList.remove('hidden');
+    targetBoardBox.classList.add('hidden');
+    btnResign.classList.add('hidden');
+    renderShipList();
+    renderBoards();
+    updatePlaceUI();
+    refreshPlacingStatus();
+  }
+
+  // ---------- Khán giả ----------
+  var specCounted = false;
+  function spectatorStatus() {
+    var sub;
+    if (specPhase === 'over') {
+      sub = winnerRole ? ('Ván đấu đã kết thúc: ' + nameOfRole(winnerRole) + ' thắng.') : 'Ván đấu đã kết thúc.';
+    } else if (specPhase === 'battle') {
+      sub = 'Lượt bắn của ' + (specTurnRole ? nameOfRole(specTurnRole) : '…') + '.';
+    } else {
+      sub = 'Hai người chơi đang xếp tàu (host: ' + (specPlaced.host ? 'đã sẵn sàng ✓' : 'đang xếp…') +
+        ', khách: ' + (specPlaced.guest ? 'đã sẵn sàng ✓' : 'đang xếp…') + '). Vị trí tàu của hai bên được giữ bí mật.';
+    }
+    setStatus('👁 Bạn đang xem ván này', sub);
+  }
+  function applySpectatorUI() {
+    btnRestart.classList.add('hidden');
+    btnResign.classList.add('hidden');
+    placePanel.classList.add('hidden');
+    targetBoardBox.classList.remove('hidden');
+    myBoardTitle.textContent = '🎯 Bàn bắn của ' + (specNameHost || 'Chủ phòng');
+    targetBoardTitle.textContent = '🎯 Bàn bắn của ' + (specNameGuest || 'Khách');
+  }
+  function specReset() {
+    specPhase = 'placing';
+    specShots = { host: emptyGrid(), guest: emptyGrid() };
+    specSunkCells = { host: {}, guest: {} };
+    specPlaced = { host: false, guest: false };
+    specTurnRole = null;
+    specFleets = null;
+    specCounted = false;
+    winnerRole = null;
+    endReason = null;
+    gameOver = false;
+    hideEndPopup();
+    renderSpecBoards();
+    spectatorStatus();
+  }
+  function specApplyResult(by, data) {
+    specShots[by][data.r][data.c] = data.hit ? 'hit' : 'miss';
+    if (data.sunk && data.sunkCells) {
+      data.sunkCells.forEach(function (cell) { specSunkCells[by][cell[0] + ',' + cell[1]] = true; });
+    }
+    if (data.win) {
+      winnerRole = by;
+      endReason = 'sunk';
+      specPhase = 'over';
+      gameOver = true; // để syncEndPopup (dùng chung cờ gameOver) hiện popup cho khán giả
+      if (!specCounted) { specCounted = true; score[by]++; updateScoreUI(); }
+      syncEndPopup();
+    } else {
+      specTurnRole = data.hit ? by : (by === 'host' ? 'guest' : 'host');
+    }
+    renderSpecBoards();
+    spectatorStatus();
+  }
+  function spectatorSyncMsg() {
+    return {
+      type: 'sync', phase: phase, names: namesPayload(), score: score, token: gameToken,
+      hostFirst: hostFirst, turnRole: turnRole(),
+      placed: { host: myPlacedReady, guest: oppPlacedReady },
+      shots: shotLog,
+      fleets: phase === 'over' ? { host: serializeFleet(myFleet), guest: guestFleetLayout } : null,
+      winner: winnerRole, reason: endReason
+    };
+  }
+  function applySpectatorSync(data) {
+    if (data.names) {
+      specNameHost = sanitizeName(data.names.host);
+      specNameGuest = sanitizeName(data.names.guest);
+    }
+    if (data.score) score = { host: data.score.host | 0, guest: data.score.guest | 0 };
+    gameToken = data.token || gameToken;
+    hostFirst = !!data.hostFirst;
+    specPhase = data.phase;
+    specPlaced = data.placed || { host: false, guest: false };
+    specTurnRole = data.turnRole || null;
+    specShots = { host: emptyGrid(), guest: emptyGrid() };
+    specSunkCells = { host: {}, guest: {} };
+    ['host', 'guest'].forEach(function (role) {
+      ((data.shots && data.shots[role]) || []).forEach(function (s) {
+        specShots[role][s.r][s.c] = s.hit ? 'hit' : 'miss';
+        if (s.sunk && s.sunkCells) s.sunkCells.forEach(function (cell) { specSunkCells[role][cell[0] + ',' + cell[1]] = true; });
+      });
+    });
+    specFleets = data.fleets || null;
+    winnerRole = data.winner || null;
+    endReason = data.reason || null;
+    if (specPhase === 'over') { specCounted = true; gameOver = true; } // tỉ số đã có sẵn trong sync
+    applySpectatorUI();
+    updateScoreUI();
+    renderSpecBoards();
+    spectatorStatus();
+    syncEndPopup();
+  }
+
+  // ---------- Mạng (Firebase relay — xem relay.js) ----------
+  var peer = null;
+  var conn = null;          // kết nối chính (khách→host, hoặc host→người chơi)
+  var connected = false;
+  var playerConn = null;    // (host) kết nối của người chơi được chấp nhận
+  var playerGone = false;   // (host) người chơi đã từng vào rồi mất kết nối
+  var spectators = [];      // (host) các kết nối khán giả
+  var wantReconnect = false;
+  var specRetry = 0;
+  var guestConnRetry = 0;
+  var connectAttempt = 0;
+  var guestRetryTimer = null;
+
+  function sendMsg(obj) {
+    if (conn && connected) {
+      try { conn.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+    }
+  }
+  function sendTo(c, obj) {
+    if (!c) return;
+    if (c.open) {
+      try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+    } else if (typeof c.on === 'function') {
+      // Hoãn gửi cho tới 'open' — tránh mất tin bắt tay (welcome/sync) như bài học ở caro
+      var sent = false;
+      c.on('open', function () {
+        if (sent) return;
+        sent = true;
+        try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+      });
+    }
+  }
+  function broadcastToSpectators(obj) {
+    spectators.forEach(function (c) { sendTo(c, obj); });
+  }
+  function shareLink() {
+    var url = new URL(location.href);
+    url.searchParams.set('room', roomCode);
+    url.searchParams.delete('host');
+    url.searchParams.delete('local');
+    return url.toString();
+  }
+
+  // ---------- Bắt tay hello / welcome (phía chủ phòng) ----------
+  function hostOnHello(c, guestName) {
+    if (c._role) return; // kết nối này đã được phân vai
+    var slotFree = !playerConn || !playerConn.open;
+    if (slotFree && !matchActive) {
+      playerConn = c;
+      conn = c;
+      c._role = 'player';
+      playerGone = false;
+      connected = true;
+      oppName = sanitizeName(guestName);
+      sendTo(c, { type: 'welcome', as: 'player', names: namesPayload() });
+      broadcastToSpectators({ type: 'names', names: namesPayload() });
+      if (myPlacedReady) sendTo(c, { type: 'placed' }); // host đã xếp xong từ trước khi khách vào
+      updateScoreUI();
+      updatePlaceUI();
+      refreshPlacingStatus();
+    } else {
+      // Đã đủ 2 người chơi, hoặc ván đang diễn ra (người vào lại giữa ván): làm khán giả
+      c._role = 'spectator';
+      spectators.push(c);
+      sendTo(c, { type: 'welcome', as: 'spectator', names: namesPayload() });
+      sendTo(c, spectatorSyncMsg());
+    }
+  }
+  function hostHandleData(c, data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'hello') {
+      c._helloSeen = true;
+      if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
+      hostOnHello(c, data.name);
+      return;
+    }
+    if (c._role === 'player') handleData(data); // khán giả chỉ gửi hello
+  }
+  function hostOnConnClose(c) {
+    if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
+    // LƯU Ý: không dùng c._closed làm cờ riêng — RelayConn của relay.js tự đặt
+    // _closed=true TRƯỚC khi bắn sự kiện 'close', sẽ làm hàm này thoát sớm luôn.
+    if (c._gone) return;
+    c._gone = true;
+    if (c._role === 'spectator') {
+      spectators = spectators.filter(function (s) { return s !== c; });
+      return;
+    }
+    if (c._role === 'player' && c === playerConn) {
+      playerConn = null;
+      conn = null;
+      connected = false;
+      playerGone = true;
+      if (phase === 'battle') {
+        setStatus('Đối thủ mất kết nối…', 'Bàn cờ được giữ nguyên. Nếu ' + dispOpp() + ' quay lại, họ sẽ xem tiếp ván này với tư cách khán giả.');
+      } else if (phase === 'over') {
+        setStatus(dispOpp() + ' đã rời phòng.', 'Ván đấu đã kết thúc. Bấm "Ván mới" để chơi lại.');
+      } else {
+        oppPlacedReady = false;
+        updatePlaceUI();
+        refreshPlacingStatus();
+      }
+    }
+  }
+  function hostWireConnection(c) {
+    // Watchdog phía host: kết nối tới nơi nhưng 15 giây không mở / không hello
+    // → dọn kết nối treo và gợi ý cho chủ phòng nếu vẫn đang chờ người vào.
+    c._pendingTimer = setTimeout(function () {
+      c._pendingTimer = null;
+      if (c._gone || c._role || c._helloSeen) return;
+      c._gone = true;
+      try { c.close(); } catch (e) { /* bỏ qua */ }
+      if (!playerConn || playerGone || !playerConn.open) {
+        setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông.', 'Nếu họ vẫn không vào được, hãy bảo họ kiểm tra lại mạng rồi thử vào lại.');
+      }
+    }, 15000);
+    c.on('data', function (data) { hostHandleData(c, data); });
+    c.on('close', function () { hostOnConnClose(c); });
+    c.on('error', function () { hostOnConnClose(c); });
+  }
+
+  // ---------- Mất kết nối (phía khách / khán giả) ----------
+  function scheduleReconnect() {
+    if (specRetry >= 10) {
+      wantReconnect = false;
+      setStatus('Mất kết nối với chủ phòng.', 'Đã thử kết nối lại nhiều lần không được. Hãy tải lại trang để vào lại phòng.');
+      return;
+    }
+    specRetry++;
+    setStatus('Đang kết nối lại…', 'Mất kết nối với chủ phòng, đang thử kết nối lại…');
+    setTimeout(connectToHost, 3000);
+  }
+  function guestOnHostGone() {
+    connected = false;
+    // Không khôi phục ván dở (xếp tàu là thông tin bí mật): nếu vào lại được,
+    // host sẽ phân vai lại — ván đang bắn thì vào xem với tư cách khán giả.
+    wantReconnect = true;
+    scheduleReconnect();
+  }
+
+  // ---------- Xử lý tin nhắn (người chơi + khán giả, cả hai phía) ----------
+  function handleData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'welcome') {
+      wantReconnect = false;
+      specRetry = 0;
+      guestConnRetry = 0;
+      if (guestRetryTimer) { clearTimeout(guestRetryTimer); guestRetryTimer = null; }
+      connected = true;
+      if (data.as === 'spectator') {
+        isSpectator = true;
+        if (data.names) {
+          specNameHost = sanitizeName(data.names.host);
+          specNameGuest = sanitizeName(data.names.guest);
+        }
+        applySpectatorUI();
+        updateScoreUI();
+        setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ ván đấu…');
+      } else {
+        isSpectator = false;
+        if (data.names) oppName = sanitizeName(data.names.host);
+        if (myName) sendMsg({ type: 'name', name: myName });
+        if (phase === 'battle' || phase === 'over') resetGame(); // host đã làm mới phòng — bắt đầu lại từ xếp tàu
+        if (myPlacedReady) sendMsg({ type: 'placed' }); // mình đã xếp xong từ trước khi vào phòng
+        updateScoreUI();
+        updatePlaceUI();
+        refreshPlacingStatus();
+      }
+    } else if (data.type === 'sync') {
+      if (isSpectator) applySpectatorSync(data);
+    } else if (data.type === 'start') {
+      if (data.names) {
+        if (isSpectator) {
+          specNameHost = sanitizeName(data.names.host);
+          specNameGuest = sanitizeName(data.names.guest);
+        } else if (!isHost) {
+          oppName = sanitizeName(data.names.host);
+        }
+      }
+      if (isSpectator) {
+        hostFirst = !!data.hostFirst;
+        gameToken = data.token || gameToken;
+        if (data.score) score = { host: data.score.host | 0, guest: data.score.guest | 0 };
+        specPhase = 'battle';
+        specTurnRole = data.hostFirst ? 'host' : 'guest';
+        specShots = { host: emptyGrid(), guest: emptyGrid() };
+        specSunkCells = { host: {}, guest: {} };
+        specFleets = null;
+        specCounted = false;
+        winnerRole = null;
+        endReason = null;
+        gameOver = false;
+        specPlaced = { host: true, guest: true };
+        hideEndPopup();
+        applySpectatorUI();
+        updateScoreUI();
+        renderSpecBoards();
+        spectatorStatus();
+      } else {
+        if (phase === 'battle' && gameToken && data.token === gameToken) return; // 'start' trùng token
+        hostFirst = !!data.hostFirst;
+        gameToken = data.token || null;
+        if (data.score) score = { host: data.score.host | 0, guest: data.score.guest | 0 };
+        scoreCounted = false;
+        updateScoreUI();
+        beginBattle();
+      }
+    } else if (data.type === 'placed') {
+      if (isSpectator) {
+        if (data.by) specPlaced[data.by] = true;
+        spectatorStatus();
+        return;
+      }
+      oppPlacedReady = true;
+      updatePlaceUI();
+      if (isHost) {
+        broadcastToSpectators({ type: 'placed', by: 'guest' });
+        maybeStartBattle();
+      }
+    } else if (data.type === 'shot') {
+      if (!isSpectator) handleShot(data);
+    } else if (data.type === 'result') {
+      if (isSpectator) { if (data.by) specApplyResult(data.by, data); }
+      else handleResult(data);
+    } else if (data.type === 'reveal') {
+      if (isSpectator) {
+        if (data.by) {
+          specFleets = specFleets || { host: null, guest: null };
+          specFleets[data.by] = data.fleet;
+          renderSpecBoards();
+        }
+        return;
+      }
+      revealedOppFleet = data.fleet;
+      if (isHost) {
+        guestFleetLayout = data.fleet;
+        broadcastToSpectators({ type: 'reveal', by: 'guest', fleet: data.fleet });
+      }
+      renderBoards();
+    } else if (data.type === 'restart') {
+      if (isSpectator) { specReset(); return; }
+      if (isHost) broadcastToSpectators({ type: 'restart' });
+      resetGame();
+    } else if (data.type === 'resign') {
+      if (isSpectator) {
+        winnerRole = data.by === 'host' ? 'guest' : 'host';
+        endReason = 'resign';
+        specPhase = 'over';
+        gameOver = true;
+        if (!specCounted) { specCounted = true; score[winnerRole]++; updateScoreUI(); }
+        spectatorStatus();
+        syncEndPopup();
+        return;
+      }
+      if (isHost) broadcastToSpectators({ type: 'resign', by: oppRole() });
+      endGame(myRole(), 'resign');
+    } else if (data.type === 'name') {
+      oppName = sanitizeName(data.name);
+      updateScoreUI();
+      updatePlaceUI();
+      if (phase === 'battle') updateBattleStatus();
+      if (isHost) broadcastToSpectators({ type: 'names', names: namesPayload() });
+    } else if (data.type === 'names') {
+      if (isSpectator && data.names) {
+        specNameHost = sanitizeName(data.names.host);
+        specNameGuest = sanitizeName(data.names.guest);
+        applySpectatorUI();
+        updateScoreUI();
+        renderSpecBoards();
+      }
+    }
+  }
+
+  // ---------- Watchdog kết nối (phía khách) ----------
+  // Mỗi lần thử có 12 giây để 'open'; quá hạn / lỗi / đóng trước khi mở →
+  // bỏ lần thử đó và thử lại (tối đa 6 lần khi vào phòng mới) rồi báo lỗi rõ ràng.
+  function guestRetryLimit() { return 6; }
+  function guestConnectFailed() {
+    setStatus('Không kết nối được tới chủ phòng.', 'Có thể do mạng không ổn định, máy chủ trung chuyển tạm thời không truy cập được, hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng hoặc nhờ chủ phòng tạo phòng mới.');
+  }
+  function scheduleGuestRetry(subMsg) {
+    if (wantReconnect) { scheduleReconnect(); return; }
+    if (guestRetryTimer) return;
+    if (guestConnRetry >= guestRetryLimit()) { guestConnectFailed(); return; }
+    guestConnRetry++;
+    setStatus('Đang thử kết nối lại… (lần ' + guestConnRetry + ')', subMsg || 'Đang thử kết nối lại với chủ phòng…');
+    guestRetryTimer = setTimeout(function () {
+      guestRetryTimer = null;
+      connectToHost();
+    }, 3000);
+  }
+  function wireGuestConnection(c, att) {
+    var opened = false;
+    var goneHandled = false;
+    var watchdog = setTimeout(function () { onAttemptFail(); }, 12000);
+    function clearWatchdog() { if (watchdog) { clearTimeout(watchdog); watchdog = null; } }
+    function onAttemptFail() {
+      if (opened || att !== connectAttempt) return;
+      clearWatchdog();
+      connectAttempt++;
+      if (conn === c) conn = null;
+      try { c.close(); } catch (e) { /* bỏ qua */ }
+      scheduleGuestRetry('Kết nối tới chủ phòng chưa thông — đang thử lại…');
+    }
+    function onGone() {
+      if (goneHandled || att !== connectAttempt) return;
+      goneHandled = true;
+      clearWatchdog();
+      guestOnHostGone();
+    }
+    c.on('open', function () {
+      if (att !== connectAttempt) return;
+      opened = true;
+      clearWatchdog();
+      conn = c;
+      try { c.send({ type: 'hello', name: myName }); } catch (e) { /* bỏ qua */ }
+    });
+    c.on('data', function (data) {
+      if (att !== connectAttempt) return;
+      handleData(data);
+    });
+    c.on('close', function () {
+      if (att !== connectAttempt) return;
+      if (!opened) { onAttemptFail(); return; }
+      onGone();
+    });
+    c.on('error', function () {
+      if (att !== connectAttempt) return;
+      if (!opened) { onAttemptFail(); return; }
+      onGone();
+    });
+    try {
+      var pc = c.peerConnection;
+      if (pc && typeof pc.addEventListener === 'function') {
+        pc.addEventListener('iceconnectionstatechange', function () {
+          if (pc.iceConnectionState !== 'failed') return;
+          if (!opened) onAttemptFail(); else onGone();
+        });
+      }
+    } catch (e) { /* bỏ qua: watchdog 12 giây vẫn canh */ }
+  }
+  function connectToHost() {
+    if (!peer || peer.destroyed) return;
+    connectAttempt++;
+    var c = peer.connect('duogames-' + roomCode, { reliable: true });
+    wireGuestConnection(c, connectAttempt);
+  }
+
+  var hostRegRetry = 0;
+  function registerHost() {
+    peer = new Peer('duogames-' + roomCode);
+    peer.on('open', function () {
+      setStatus('Đang chờ đối thủ vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Bạn có thể xếp hạm đội trước trong lúc chờ.');
+    });
+    peer.on('connection', function (c) { hostWireConnection(c); });
+    peer.on('error', function (err) {
+      if (err && err.type === 'unavailable-id') {
+        if (hostRegRetry < 15) {
+          // Claim cũ của chính mình chưa hết hạn trên máy chủ (vừa tải lại trang):
+          // thử đăng ký lại mỗi 2 giây, tối đa ~30 giây
+          hostRegRetry++;
+          setStatus('Đang đăng ký lại mã phòng…', 'Vui lòng chờ vài giây…');
+          setTimeout(function () {
+            try { peer.destroy(); } catch (e) {}
+            registerHost();
+          }, 2000);
+        } else {
+          setStatus('Mã phòng này đang được dùng.', 'Hãy tạo phòng khác với mã mới.');
+        }
+      } else {
+        setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+      }
+    });
+  }
+  function startOnline() {
+    roomInfoEl.classList.remove('hidden');
+    roomCodeText.textContent = roomCode;
+    if (typeof Peer === 'undefined' || (window.Relay && !Relay.configured)) {
+      setStatus('Chưa cấu hình máy chủ trung chuyển (Firebase).', 'Trang chưa thể chơi online — cần điền cấu hình Firebase vào relay.js trước.');
+      return;
+    }
+    if (isHost) {
+      updateScoreUI();
+      document.getElementById('shareText').textContent = 'Gửi link mời này cho đối thủ để họ vào phòng:';
+      registerHost();
+    } else {
+      document.getElementById('shareText').textContent = 'Bạn đang vào phòng với tư cách khách.';
+      btnCopy.classList.add('hidden');
+      setStatus('Đang kết nối tới phòng…', 'Vui lòng chờ chủ phòng sẵn sàng.');
+      peer = new Peer();
+      peer.on('open', function () { connectToHost(); });
+      peer.on('error', function (err) {
+        if (err && err.type === 'peer-unavailable') {
+          if (wantReconnect) scheduleReconnect();
+          else setStatus('Không tìm thấy phòng ' + roomCode + '.', 'Có thể chủ phòng chưa tạo phòng hoặc mã phòng chưa đúng. Hãy tải lại trang và thử lại.');
+        } else {
+          setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+        }
+      });
+    }
+  }
+
+  // ---------- Chế độ 2 người trên cùng máy (hot-seat, có màn che chuyền máy) ----------
+  var localGameNo = 0;
+  function freshLocal() {
+    return {
+      fleets: [emptyFleet(), emptyFleet()],
+      shots: [emptyGrid(), emptyGrid()],
+      cur: 0, placingFor: 0, phase: 'cover', winner: null, games: localGameNo
+    };
+  }
+  function showCover(player, kind) {
+    coverNext = { player: player, kind: kind };
+    if (L) L.phase = 'cover';
+    coverTitleEl.textContent = 'Đưa máy cho Người chơi ' + (player + 1);
+    coverTextEl.textContent = kind === 'place'
+      ? 'Người chơi ' + (player + 1) + ' sẽ xếp hạm đội trong bí mật. Người kia đừng nhìn nhé!'
+      : 'Đến lượt Người chơi ' + (player + 1) + ' bắn. Người kia đừng nhìn bàn nhé!';
+    btnCover.textContent = 'Tôi là Người chơi ' + (player + 1) + ' — mở bàn';
+    coverOverlay.classList.remove('hidden');
+  }
+  function renderLocalBoards() {
+    if (!L) return;
+    if (L.phase === 'placing' || (L.phase === 'cover' && coverNext && coverNext.kind === 'place')) {
+      renderPlaceBoard();
+      return;
+    }
+    var cur = L.cur, opp = 1 - cur;
+    paintFleetBoard(myCells, L.fleets[cur], L.shots[opp]);
+    var sunkCells = {};
+    L.fleets[opp].forEach(function (pl, idx) {
+      if (pl && shipSunk(L.fleets[opp], L.shots[cur], idx)) {
+        cellsOf(pl, SHIPS[idx].size).forEach(function (cell) { sunkCells[cell[0] + ',' + cell[1]] = true; });
+      }
+    });
+    paintTargetBoard(targetCells, L.shots[cur], sunkCells, L.phase === 'over' ? serializeFleet(L.fleets[opp]) : null);
+    myBoardTitle.textContent = '🚢 Hạm đội của Người chơi ' + (cur + 1);
+    targetBoardTitle.textContent = '🎯 Bàn mục tiêu — Người chơi ' + (cur + 1) + ' bắn';
+    myCaptionEl.textContent = 'Đối thủ đã bắn trúng ' + countGrid(L.shots[opp], 'hit') + '/17 ô tàu của bạn.';
+    targetCaptionEl.textContent = 'Bạn đã bắn trúng ' + countGrid(L.shots[cur], 'hit') + '/17 ô tàu đối thủ.';
+  }
+  function localPlaceClick(r, c) {
+    if (!L || L.phase !== 'placing') return;
+    var grid = fleetGrid(editFleet);
+    var idx = grid[r][c];
+    clearPreview();
+    if (idx >= 0) { // gỡ tàu đã đặt
+      editFleet[idx] = null;
+      selShip = idx;
+      afterPlaceChange();
+      return;
+    }
+    if (selShip < 0 || editFleet[selShip]) return;
+    if (!canPlace(editFleet, selShip, r, c, orient)) return;
+    editFleet[selShip] = { r: r, c: c, dir: orient };
+    selShip = nextUnplaced();
+    afterPlaceChange();
+  }
+  function startLocalBattle() {
+    L.cur = L.games % 2; // ván đầu Người chơi 1 bắn trước, các ván sau luân phiên
+    localGameNo = L.games + 1;
+    placePanel.classList.add('hidden');
+    targetBoardBox.classList.remove('hidden');
+    placeLocked = true;
+    showCover(L.cur, 'battle');
+    L.phase = 'battle';
+    renderLocalBoards();
+  }
+  function localFire(r, c) {
+    if (!L || L.phase !== 'battle') return;
+    if (L.shots[L.cur][r][c] !== '') return;
+    var opp = 1 - L.cur;
+    var idx = fleetGrid(L.fleets[opp])[r][c];
+    var hit = idx >= 0;
+    L.shots[L.cur][r][c] = hit ? 'hit' : 'miss';
+    var sunkName = (hit && shipSunk(L.fleets[opp], L.shots[L.cur], idx)) ? SHIPS[idx].name : null;
+    var win = countGrid(L.shots[L.cur], 'hit') >= TOTAL_CELLS;
+    lastResult = { r: r, c: c, hit: hit, sunk: sunkName, win: win };
+    if (win) { localEndGame(L.cur); return; }
+    renderLocalBoards();
+    if (hit) {
+      setStatus('💥 Người chơi ' + (L.cur + 1) + ' bắn trúng ô ' + cellLabel(r, c) + '!' + (sunkName ? ' Đã chìm ' + sunkName + '!' : ''), 'Bắn trúng nên được bắn tiếp.');
+    } else {
+      L.cur = opp;
+      showCover(opp, 'battle');
+    }
+  }
+  function localEndGame(winnerIdx) {
+    L.phase = 'over';
+    L.winner = winnerIdx;
+    renderLocalBoards();
+    setStatus('🎉 Người chơi ' + (winnerIdx + 1) + ' thắng!', 'Bấm "Ván mới" để chơi lại.');
+    syncEndPopup();
+  }
+  function resetLocal() {
+    hideEndPopup();
+    L = freshLocal();
+    editFleet = L.fleets[0];
+    selShip = 0;
+    orient = 'h';
+    btnRotate.textContent = '🔄 Xoay: Ngang';
+    placeLocked = false;
+    placePanel.classList.remove('hidden');
+    targetBoardBox.classList.add('hidden');
+    myBoardTitle.textContent = '🚢 Hạm đội của bạn';
+    targetBoardTitle.textContent = '🎯 Bàn mục tiêu';
+    renderShipList();
+    renderBoards();
+    updatePlaceUI();
+    showCover(0, 'place');
+  }
+  function initLocal() {
+    L = freshLocal();
+    editFleet = L.fleets[0];
+    placePanel.classList.remove('hidden');
+    btnResign.classList.add('hidden');
+    setStatus('Chế độ 2 người trên cùng máy', 'Chuyền máy cho nhau: mỗi người xếp tàu trong bí mật, rồi thay nhau bắn.');
+    renderShipList();
+    renderBoards();
+    updatePlaceUI();
+    showCover(0, 'place');
+  }
+
+  // ---------- Tương tác bàn mục tiêu ----------
+  function onTargetCellClick(r, c) {
+    if (isSpectator) return;
+    if (isLocal) { localFire(r, c); return; }
+    fireShot(r, c);
+  }
+
+  // ---------- Nút bấm ----------
+  btnRotate.addEventListener('click', function () {
+    if (placeLocked) return;
+    orient = orient === 'h' ? 'v' : 'h';
+    btnRotate.textContent = orient === 'h' ? '🔄 Xoay: Ngang' : '🔄 Xoay: Dọc';
+    clearPreview();
+  });
+  btnRandomPlace.addEventListener('click', function () {
+    if (placeLocked) return;
+    setEditFleet(randomFleet());
+    selShip = -1;
+    clearPreview();
+    afterPlaceChange();
+  });
+  btnClearPlace.addEventListener('click', function () {
+    if (placeLocked) return;
+    setEditFleet(emptyFleet());
+    selShip = 0;
+    clearPreview();
+    afterPlaceChange();
+  });
+  btnPlaceReady.addEventListener('click', function () {
+    if (isLocal) {
+      if (!L || L.phase !== 'placing' || !fleetComplete(editFleet)) return;
+      if (L.placingFor === 0) {
+        L.placingFor = 1;
+        editFleet = L.fleets[1];
+        selShip = 0;
+        clearPreview();
+        renderShipList();
+        renderBoards();
+        updatePlaceUI();
+        showCover(1, 'place');
+      } else {
+        startLocalBattle();
+      }
+      return;
+    }
+    if (!fleetComplete(myFleet) || myPlacedReady) return;
+    myPlacedReady = true;
+    placeLocked = true;
+    sendMsg({ type: 'placed' });
+    if (isHost) {
+      broadcastToSpectators({ type: 'placed', by: 'host' });
+      maybeStartBattle();
+    }
+    updatePlaceUI();
+    setStatus('✅ Bạn đã sẵn sàng!', oppPlacedReady ? 'Cả hai đã sẵn sàng — ván bắt đầu!' : 'Chờ ' + dispOpp() + ' xếp xong hạm đội…');
+  });
+  btnRestart.addEventListener('click', function () {
+    if (isSpectator) return;
+    if (isLocal) { resetLocal(); return; }
+    if (online) {
+      sendMsg({ type: 'restart' });
+      if (isHost) broadcastToSpectators({ type: 'restart' });
+    }
+    resetGame();
+  });
+  btnResign.addEventListener('click', function () {
+    if (!online || isSpectator || phase !== 'battle' || gameOver) return;
+    sendMsg({ type: 'resign' });
+    if (isHost) broadcastToSpectators({ type: 'resign', by: 'host' });
+    endGame(oppRole(), 'resign');
+  });
+  btnCover.addEventListener('click', function () {
+    coverOverlay.classList.add('hidden');
+    if (!coverNext || !L) return;
+    if (coverNext.kind === 'place') {
+      L.phase = 'placing';
+      renderBoards();
+      updatePlaceUI();
+      setStatus('Người chơi ' + (coverNext.player + 1) + ' xếp tàu', 'Xếp xong cả 5 tàu rồi bấm "✅ Sẵn sàng" và chuyền máy.');
+    } else {
+      L.phase = 'battle';
+      renderLocalBoards();
+      setStatus('🎯 Lượt của Người chơi ' + (L.cur + 1), 'Bấm vào một ô trên bàn mục tiêu để bắn. Bắn trúng được bắn tiếp, bắn trượt chuyền máy.');
+    }
+  });
+  btnCopy.addEventListener('click', function () {
+    var link = shareLink();
+    function done() {
+      btnCopy.textContent = 'Đã sao chép ✓';
+      setTimeout(function () { btnCopy.textContent = 'Sao chép link mời'; }, 2000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(done, function () { window.prompt('Sao chép link mời:', link); });
+    } else {
+      window.prompt('Sao chép link mời:', link);
+    }
+  });
+  btnChangeName.addEventListener('click', function () { openNameModal(); });
+  btnNameDice.addEventListener('click', function () {
+    nameGenerated = genRandomName();
+    nameInput.value = nameGenerated;
+  });
+  btnNameSave.addEventListener('click', function () { saveNameFromModal(); });
+
+  var btnCreate = document.getElementById('btnCreate');
+  if (btnCreate) {
+    btnCreate.addEventListener('click', function () {
+      var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      var code = 'B';
+      for (var i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+      location.href = 'battleship.html?room=' + code + '&host=1';
+    });
+  }
+  var btnJoin = document.getElementById('btnJoin');
+  if (btnJoin) {
+    btnJoin.addEventListener('click', function () {
+      var code = document.getElementById('joinCode').value.trim().toUpperCase();
+      if (code) location.href = 'battleship.html?room=' + encodeURIComponent(code);
+    });
+  }
+
+  // ---------- Khởi tạo ----------
+  myName = loadProfile();
+  myCells = buildGrid(myBoardEl, onMyCellClick);
+  targetCells = buildGrid(targetBoardEl, onTargetCellClick);
+  myBoardEl.addEventListener('mouseleave', function () { clearPreview(); });
+
+  if (isLocal) {
+    initLocal();
+  } else if (online) {
+    placePanel.classList.remove('hidden');
+    renderShipList();
+    renderBoards();
+    updatePlaceUI();
+    refreshPlacingStatus();
+    startOnline();
+  } else {
+    setupEl.classList.remove('hidden');
+    myBoardBox.classList.add('hidden');
+    setStatus('Chọn cách chơi bên trên để bắt đầu.', '');
+  }
+  if (!myName) openNameModal();
+
+  // Móc kiểm thử tự động (harness) — không ảnh hưởng người chơi thường
+  window.BATTLESHIP_DEBUG = {
+    state: function () {
+      return {
+        online: online, isLocal: isLocal, isHost: isHost, isSpectator: isSpectator,
+        connected: connected, phase: phase,
+        myPlacedReady: myPlacedReady, oppPlacedReady: oppPlacedReady,
+        turn: turn, turnRole: turnRole(), gameOver: gameOver, winnerRole: winnerRole, endReason: endReason,
+        score: { host: score.host, guest: score.guest }, gameToken: gameToken, hostFirst: hostFirst,
+        myFleet: serializeFleet(myFleet), fleetComplete: fleetComplete(myFleet),
+        hitsOnMe: countGrid(myShotsTaken, 'hit'), hitsByMe: countGrid(myShotsFired, 'hit'),
+        shotsFired: countGrid(myShotsFired, 'hit') + countGrid(myShotsFired, 'miss'),
+        shotsTaken: countGrid(myShotsTaken, 'hit') + countGrid(myShotsTaken, 'miss'),
+        lastResult: lastResult, revealedOppFleet: revealedOppFleet,
+        endVisible: !endOverlay.classList.contains('hidden'), endTitle: endTitleEl.textContent,
+        spec: isSpectator ? {
+          phase: specPhase, fleets: specFleets, turnRole: specTurnRole,
+          shotsHost: countGrid(specShots.host, 'hit') + countGrid(specShots.host, 'miss'),
+          shotsGuest: countGrid(specShots.guest, 'hit') + countGrid(specShots.guest, 'miss'),
+          hitsHost: countGrid(specShots.host, 'hit'), hitsGuest: countGrid(specShots.guest, 'hit')
+        } : null,
+        local: (isLocal && L) ? {
+          phase: L.phase, cur: L.cur, placingFor: L.placingFor, winner: L.winner,
+          fleets: [serializeFleet(L.fleets[0]), serializeFleet(L.fleets[1])],
+          shots: [countGrid(L.shots[0], 'hit') + countGrid(L.shots[0], 'miss'), countGrid(L.shots[1], 'hit') + countGrid(L.shots[1], 'miss')],
+          hits: [countGrid(L.shots[0], 'hit'), countGrid(L.shots[1], 'hit')],
+          coverVisible: !coverOverlay.classList.contains('hidden')
+        } : null
+      };
+    },
+    placeFleet: function (layout) {
+      var f = emptyFleet();
+      for (var i = 0; i < SHIPS.length; i++) {
+        var p = layout[i];
+        if (!p) continue;
+        if (!canPlace(f, i, p.r, p.c, p.dir)) return false;
+        f[i] = { r: p.r, c: p.c, dir: p.dir };
+      }
+      setEditFleet(f);
+      selShip = nextUnplaced();
+      clearPreview();
+      afterPlaceChange();
+      return true;
+    },
+    fireAt: function (r, c) { onTargetCellClick(r, c); },
+    rawShot: function (r, c) { if (online && !isSpectator) sendMsg({ type: 'shot', r: r, c: c }); },
+    cells: function () { return { mine: myCells, target: targetCells, chips: chipEls }; },
+    canPlace: function (fleet, idx, r, c, dir) { return canPlace(fleet, idx, r, c, dir); },
+    editFleet: function () { return editFleet; },
+    randomFleet: randomFleet
+  };
+})();
+</script>
+</body>
+</html>

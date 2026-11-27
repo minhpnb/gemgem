@@ -1,0 +1,1823 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xì Dách — DuoGames</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="relay.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.5; }
+  main { max-width: 680px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: #94a3b8; margin: 0 0 16px; }
+  .panel { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  #status { font-weight: 600; }
+  #status.small, .small { font-weight: 400; color: #94a3b8; font-size: .95rem; }
+  .roomcode { font-size: 1.3rem; font-weight: 700; letter-spacing: 2px; color: #38bdf8; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  button, .btn { display: inline-block; padding: 9px 14px; background: #38bdf8; color: #082f49; border: none; border-radius: 8px; font-weight: 600; font-size: .95rem; cursor: pointer; text-decoration: none; }
+  button.secondary, .btn.secondary { background: #334155; color: #e2e8f0; }
+  button.danger { background: #7f1d1d; color: #fecaca; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.toggled { background: #16a34a; color: #f0fdf4; }
+  .overlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .78); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; overflow-y: auto; }
+  .overlay.hidden { display: none; }
+  .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 20px; max-width: 480px; width: 100%; text-align: center; margin: auto; }
+  .modal h2 { margin: 0 0 8px; font-size: 1.3rem; }
+  table.lobby { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: .98rem; }
+  table.lobby th, table.lobby td { border: 1px solid #334155; padding: 7px 8px; text-align: left; }
+  table.lobby th { background: #0f172a; color: #94a3b8; font-weight: 600; }
+  input[type="text"] { padding: 9px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; text-transform: uppercase; }
+  #nameInput { text-transform: none; }
+  .hidden { display: none; }
+  a { color: #38bdf8; }
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
+
+  /* Hàng người chơi trên bàn */
+  .prow { border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: #16213a; }
+  .prow.turn { border-color: #facc15; box-shadow: 0 0 0 1px #facc15, 0 0 10px rgba(250, 204, 21, .35); }
+  .prow.dealer { background: #2b2118; }
+  .prow .phead { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; }
+  .prow .pname { font-weight: 700; }
+  .prow .pbadge { font-size: .82rem; background: #7c2d12; color: #fed7aa; border-radius: 999px; padding: 1px 9px; font-weight: 600; }
+  .prow .pbadge.con { background: #164e63; color: #a5f3fc; }
+  .prow .pxu { color: #facc15; font-weight: 600; }
+  .prow .pstate { color: #94a3b8; font-size: .92rem; }
+  .prow .pstate.good { color: #4ade80; }
+  .prow .pstate.bad { color: #f87171; }
+  .cards { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 50px; }
+  /* Lá bài */
+  .pcard { width: 38px; height: 52px; border-radius: 6px; background: #f8fafc; color: #0f172a; border: 1px solid #94a3b8; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 700; line-height: 1.05; box-shadow: 0 1px 3px rgba(0,0,0,.4); user-select: none; }
+  .pcard .rk { font-size: 1.02rem; }
+  .pcard .st { font-size: .95rem; }
+  .pcard.red { color: #dc2626; }
+  .pcard.back { background: repeating-linear-gradient(45deg, #1d4ed8 0 6px, #1e40af 6px 12px); color: #bfdbfe; border-color: #3b82f6; font-size: 1.1rem; }
+  .cards.big .pcard { width: 48px; height: 66px; }
+  .cards.big .pcard .rk { font-size: 1.25rem; }
+  .cards.big .pcard .st { font-size: 1.15rem; }
+  #myHandInfo { font-weight: 600; margin-top: 6px; }
+  #endResults { text-align: left; margin: 10px 0; }
+  #endResults .rline { border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: #16213a; }
+  #endResults .rline .rdelta { font-weight: 700; }
+  .pos { color: #4ade80; } .neg { color: #f87171; } .zero { color: #94a3b8; }
+  #endScore { margin: 0 0 14px; font-weight: 600; color: #facc15; }
+</style>
+</head>
+<body>
+<main>
+  <h1><img class="title-logo" src="logo.svg" alt="gemgem">🃏 Xì Dách</h1>
+  <p class="sub">2–6 người chơi. Một người làm <strong>nhà cái</strong> mỗi ván (luân phiên nhau), các nhà con đấu với nhà cái. Mỗi ván nhà con đặt 10 xu, thắng bài thường ăn 10, thắng bằng bài đặc biệt (xì bàn, xì dách, ngũ linh) ăn gấp đôi. Đủ 16 điểm mới được dằng; quá 21 là quắc. Hết xu sẽ được cứu trợ về 100 xu ở đầu ván sau.</p>
+
+  <!-- Màn hình thiết lập khi mở trực tiếp không có tham số -->
+  <div id="setup" class="panel hidden">
+    <p><strong>Chơi online 2–6 người:</strong> tạo phòng để nhận mã phòng và link mời, hoặc nhập mã phòng của bạn bè để tham gia.</p>
+    <div class="toolbar">
+      <button id="btnCreate" type="button">Tạo phòng mới</button>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="joinCode" placeholder="Nhập mã phòng, ví dụ XAB12C" maxlength="8" size="18">
+      <button id="btnJoin" type="button" class="secondary">Vào phòng</button>
+    </div>
+    <div class="toolbar">
+      <a class="btn secondary" href="xidach.html?local=1">Chơi trên cùng máy</a>
+      <a class="btn secondary" href="index.html">Về trang chủ</a>
+    </div>
+  </div>
+
+  <!-- Thông tin phòng -->
+  <div id="roomInfo" class="panel hidden">
+    <div>Mã phòng: <span class="roomcode" id="roomCodeText"></span></div>
+    <p id="shareText" style="margin:8px 0;">Gửi link mời này cho bạn bè để họ vào phòng:</p>
+    <div class="toolbar">
+      <button id="btnCopy" type="button">Sao chép link mời</button>
+    </div>
+  </div>
+
+  <!-- Chọn số người chơi (chế độ cùng máy) -->
+  <div id="localSetup" class="panel hidden">
+    <p><strong>Chế độ cùng máy:</strong> chọn số người chơi rồi bấm Bắt đầu. Mọi người chuyền máy cho nhau — có màn che trước mỗi lượt xem bài.</p>
+    <div class="toolbar">
+      <button id="btnP2" type="button" class="secondary">2 người</button>
+      <button id="btnP3" type="button" class="secondary">3 người</button>
+      <button id="btnP4" type="button" class="secondary">4 người</button>
+      <button id="btnP5" type="button" class="secondary">5 người</button>
+      <button id="btnP6" type="button" class="secondary">6 người</button>
+      <button id="btnLocalStart" type="button">Bắt đầu</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="status">Đang khởi tạo…</div>
+    <div id="statusSub" class="small"></div>
+    <div class="toolbar">
+      <button id="btnRematch" type="button" class="hidden">▶ Ván tiếp</button>
+      <button id="btnChangeName" type="button" class="secondary">✏️ Đổi tên</button>
+      <a class="btn secondary" href="index.html">Về trang chủ</a>
+    </div>
+  </div>
+
+  <!-- Bàn chơi: danh sách người chơi + bài (úp/ngửa theo giai đoạn) -->
+  <div class="panel" id="tablePanel">
+    <div id="playersList"></div>
+    <div class="meta small" id="tableNote">Chưa bắt đầu ván nào.</div>
+  </div>
+
+  <!-- Bài của mình + nút Rút / Dằng -->
+  <div class="panel" id="myPanel">
+    <div><strong id="myHandTitle">Bài của bạn</strong></div>
+    <div class="cards big" id="myCards"></div>
+    <div id="myHandInfo">—</div>
+    <div class="toolbar">
+      <button id="btnHit" type="button" disabled>➕ Rút bài</button>
+      <button id="btnStand" type="button" class="secondary" disabled>✋ Dằng</button>
+    </div>
+    <div id="myActionNote" class="small"></div>
+  </div>
+</main>
+
+  <!-- Sảnh chờ: bảng người chơi + sẵn sàng -->
+  <div id="lobbyOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2>🃏 Sảnh chờ — Xì dách</h2>
+      <p class="small" style="margin:0;">Ván bắt đầu khi có ít nhất 2 người chơi và <strong>mọi người đang có mặt</strong> đều bấm Sẵn sàng. Nhà cái luân phiên mỗi ván.</p>
+      <table class="lobby">
+        <thead><tr><th>Tên</th><th>Vai trò</th><th>Xu</th><th>Trạng thái</th></tr></thead>
+        <tbody id="lobbyBody"></tbody>
+      </table>
+      <div id="lobbyNote" class="small" style="margin-bottom:12px;">Đang chờ thêm người chơi…</div>
+      <button id="btnLobbyReady" type="button">✅ Sẵn sàng</button>
+      <div style="margin-top:10px;">
+        <button id="btnLobbyCopy" type="button" class="secondary">📋 Sao chép link mời</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Popup kết quả ván (hiện khi xét bài xong) -->
+  <div id="endOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="endTitle">🏁 Kết quả ván</h2>
+      <div id="endResults"></div>
+      <p id="endScore"></p>
+      <div class="toolbar" style="justify-content:center;">
+        <button id="btnEndRematch" type="button">▶ Ván tiếp</button>
+        <button id="btnEndClose" type="button" class="secondary">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Màn che chuyền máy (chế độ cùng máy) -->
+  <div id="coverOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="coverTitle">📱 Chuyền máy</h2>
+      <p id="coverText">Đưa máy cho người chơi tiếp theo.</p>
+      <button id="btnCoverOk" type="button">👁 Xem bài của tôi</button>
+    </div>
+  </div>
+
+  <!-- Popup nhập tên hiển thị (lần đầu truy cập / khi bấm Đổi tên) -->
+  <div id="nameOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2>👤 Tên của bạn</h2>
+      <p>Nhập tên hiển thị khi chơi online. Tên được lưu vĩnh viễn trên trình duyệt này.</p>
+      <div class="toolbar" style="justify-content:center;">
+        <input type="text" id="nameInput" placeholder="Tên của bạn" maxlength="24" size="22">
+      </div>
+      <div class="toolbar" style="justify-content:center;">
+        <button id="btnNameDice" type="button" class="secondary">🎲 Tên ngẫu nhiên</button>
+        <button id="btnNameSave" type="button">Lưu tên</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ================= Hằng số =================
+  var MAX_SEATS = 6;          // tối đa 6 người chơi một phòng
+  var BET = 10;               // mỗi nhà con đặt 10 xu / ván
+  var START_XU = 100;         // xu khởi điểm + mức cứu trợ khi hết xu
+  var SUITS = ['♠', '♥', '♦', '♣'];
+  var SUIT_RED = { 1: true, 2: true }; // ♥ ♦ là chất đỏ
+  /* Kết nối qua relay.js (Firebase RTDB) — không còn cấu hình STUN/TURN */
+
+  var params = new URLSearchParams(location.search);
+  var roomCode = (params.get('room') || '').toUpperCase();
+  var isHost = params.get('host') === '1';
+  var isLocal = params.get('local') === '1';
+  var online = !isLocal && !!roomCode;
+  var isAuthority = isLocal || (online && isHost); // phía chạy logic ván đấu (host hoặc máy local)
+
+  // ================= Tham chiếu DOM =================
+  function el(id) { return document.getElementById(id); }
+  var statusEl = el('status'), statusSubEl = el('statusSub');
+  var playersListEl = el('playersList'), tableNoteEl = el('tableNote');
+  var myCardsEl = el('myCards'), myHandTitleEl = el('myHandTitle'), myHandInfoEl = el('myHandInfo');
+  var btnHit = el('btnHit'), btnStand = el('btnStand'), myActionNoteEl = el('myActionNote');
+  var roomInfoEl = el('roomInfo'), roomCodeText = el('roomCodeText'), btnCopy = el('btnCopy'), shareText = el('shareText');
+  var setupEl = el('setup'), localSetupEl = el('localSetup');
+  var lobbyOverlay = el('lobbyOverlay'), lobbyBody = el('lobbyBody'), lobbyNote = el('lobbyNote'), btnLobbyReady = el('btnLobbyReady'), btnLobbyCopy = el('btnLobbyCopy');
+  var btnRematch = el('btnRematch'), btnChangeName = el('btnChangeName');
+  var endOverlay = el('endOverlay'), endTitleEl = el('endTitle'), endResultsEl = el('endResults'), endScoreEl = el('endScore');
+  var btnEndRematch = el('btnEndRematch'), btnEndClose = el('btnEndClose');
+  var coverOverlay = el('coverOverlay'), coverTitleEl = el('coverTitle'), coverTextEl = el('coverText'), btnCoverOk = el('btnCoverOk');
+  var nameOverlay = el('nameOverlay'), nameInput = el('nameInput'), btnNameDice = el('btnNameDice'), btnNameSave = el('btnNameSave');
+
+  // ================= Trạng thái =================
+  var G = null;          // trạng thái ván (chỉ phía có thẩm quyền giữ bản chuẩn); null = đang ở sảnh
+  var view = null;       // bản PUBLIC của ván dùng để vẽ (mọi máy đều có; không chứa bài úp của nhà con)
+  var myCards = null;    // bài của chính trang này (khách nhận qua tin riêng 'yourhand'; host lấy từ G)
+  var myPid = null;      // mã người chơi của trang này (online); null = khán giả / chưa phân
+  var isSpectator = false;
+  var lobbyPlayers = []; // [{pid,name,xu,ready,connected,isDealer}] — bản mới nhất
+  var peer = null, conn = null;
+  var connected = false;
+  var everInGame = false;
+  var connectAttempt = 0, guestConnRetry = 0, guestRetryTimer = null;
+  var wantReconnect = false, specRetry = 0;
+  var localPlayerCount = 2;
+  var localNames = [];   // tên người chơi ở chế độ cùng máy
+  var autoTimer = null;  // hẹn giờ đánh thay cho người mất kết nối
+
+  // Phía host: sổ NGƯỜI CHƠI theo thứ tự vào phòng — seats[pid] = null |
+  // {conn, name, connected, ready, xu}. Tối đa MAX_SEATS ghế.
+  var seats = [];
+  for (var si = 0; si < MAX_SEATS; si++) seats.push(null);
+  var nextDealerPid = 0; // pid làm nhà cái ở ván TỚI (ván đầu: chủ phòng)
+  var roundsStarted = 0;
+  var deckOverride = null; // chỉ dùng cho kiểm thử (harness gán bộ bài đã sắp sẵn)
+
+  // Chế độ cùng máy: màn che chuyền máy
+  var coverPid = null;        // pid đang bị che bài (chờ bấm "Xem bài")
+  var coverDismissed = false; // pid hiện tại đã bấm xem bài chưa
+
+  // Tên hiển thị (hồ sơ lưu vĩnh viễn trong localStorage, key 'duo-profile')
+  var myName = '';
+  var nameGenerated = '';
+
+  function setStatus(main, sub) {
+    statusEl.textContent = main;
+    statusSubEl.textContent = sub || '';
+  }
+
+  // ---------- Tên hiển thị (hồ sơ vĩnh viễn) ----------
+  function sanitizeName(s) {
+    return String(s == null ? '' : s).trim().slice(0, 24);
+  }
+
+  var NAME_ANIMALS = ['Chó', 'Mèo', 'Rùa', 'Gà', 'Vịt', 'Cá', 'Khỉ', 'Hổ', 'Thỏ', 'Heo', 'Bò', 'Dê', 'Ngựa', 'Chim', 'Ếch', 'Gấu'];
+  var NAME_DESCS = ['Đỏ', 'Xấu', 'Xanh', 'Nhanh', 'Lười', 'Béo', 'Dữ', 'Hiền', 'Ngầu', 'Khôn', 'Lém', 'Vui', 'Cao', 'Lạnh', 'Tếu', 'Gầy'];
+
+  function genRandomName() {
+    var a = NAME_ANIMALS[Math.floor(Math.random() * NAME_ANIMALS.length)];
+    var d = NAME_DESCS[Math.floor(Math.random() * NAME_DESCS.length)];
+    var n = 1 + Math.floor(Math.random() * 99);
+    return a + ' ' + d + ' ' + n;
+  }
+
+  function loadProfile() {
+    try {
+      var raw = localStorage.getItem('duo-profile');
+      if (!raw) return '';
+      var p = JSON.parse(raw);
+      return sanitizeName(p && p.name);
+    } catch (e) { return ''; }
+  }
+
+  function saveProfile() {
+    try { localStorage.setItem('duo-profile', JSON.stringify({ name: myName })); } catch (e) { /* bỏ qua */ }
+  }
+
+  function openNameModal() {
+    if (myName) {
+      nameGenerated = myName;
+      nameInput.value = myName;
+    } else {
+      nameGenerated = genRandomName();
+      nameInput.value = nameGenerated;
+    }
+    nameOverlay.classList.remove('hidden');
+  }
+
+  function saveNameFromModal() {
+    var v = sanitizeName(nameInput.value);
+    if (!v) v = nameGenerated || genRandomName();
+    myName = v;
+    saveProfile();
+    nameOverlay.classList.add('hidden');
+    announceName();
+    renderAll();
+  }
+
+  // Báo tên của mình cho host (khách) — host cập nhật ghế rồi phát lại sảnh
+  function announceName() {
+    if (!online || isSpectator) return;
+    if (isHost) {
+      if (seats[0]) { seats[0].name = myName; broadcastLobby(); }
+    } else if (connected && conn) {
+      sendTo(conn, { type: 'name', name: myName });
+    }
+  }
+
+  // Tên của một người chơi (theo pid) theo dữ liệu sảnh mới nhất
+  function playerName(pid) {
+    if (isLocal) return localNames[pid] || ('Người chơi ' + (pid + 1));
+    for (var i = 0; i < lobbyPlayers.length; i++) {
+      if (lobbyPlayers[i].pid === pid && lobbyPlayers[i].name) return lobbyPlayers[i].name;
+    }
+    if (pid === myPid && myName) return myName;
+    return 'Người chơi ' + (pid + 1);
+  }
+
+  // ================= Engine bài (logic thuần) =================
+  // Lá bài: {r: 1..13 (1=Át, 11=J, 12=Q, 13=K), s: 0..3 (♠♥♦♣)}
+  function rankLabel(r) {
+    if (r === 1) return 'A';
+    if (r === 11) return 'J';
+    if (r === 12) return 'Q';
+    if (r === 13) return 'K';
+    return String(r);
+  }
+  function cardText(c) { return rankLabel(c.r) + SUITS[c.s]; }
+  function cardPoint(r) { return r === 1 ? 1 : Math.min(r, 10); } // Át tính 1 ở mức cơ bản; J/Q/K = 10
+
+  function makeDeck() {
+    var d = [];
+    for (var s = 0; s < 4; s++) for (var r = 1; r <= 13; r++) d.push({ r: r, s: s });
+    for (var i = d.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = d[i]; d[i] = d[j]; d[j] = t;
+    }
+    return d;
+  }
+
+  // Tổng điểm: Át linh hoạt 1/11. Trả {total: điểm tốt nhất không quắc (hoặc điểm
+  // thấp nhất nếu quắc), min: tổng khi mọi Át = 1}.
+  function handValue(cards) {
+    var sum = 0, aces = 0, i;
+    for (i = 0; i < cards.length; i++) {
+      sum += cardPoint(cards[i].r);
+      if (cards[i].r === 1) aces++;
+    }
+    var best = sum;
+    if (aces > 0 && sum + 10 <= 21) best = sum + 10;
+    return { total: best, min: sum };
+  }
+
+  // Xếp hạng bài, từ mạnh xuống yếu:
+  //   tier 4: XÌ BÀN (2 lá Át)  >  tier 3: XÌ DÁCH (Át + lá 10 điểm ở 2 lá đầu)
+  //   > tier 2: NGŨ LINH (5 lá, tổng ≤ 21)  >  tier 1: điểm thường (16..21)
+  //   > tier 0: QUẮC (tổng thấp nhất > 21).
+  function evalHand(cards) {
+    var hv = handValue(cards);
+    if (cards.length === 2 && cards[0].r === 1 && cards[1].r === 1) {
+      return { tier: 4, total: hv.total, name: 'Xì bàn' };
+    }
+    if (cards.length === 2) {
+      var hasAce = cards[0].r === 1 || cards[1].r === 1;
+      var hasTen = cardPoint(cards[0].r) === 10 && cards[0].r !== 1 || cardPoint(cards[1].r) === 10 && cards[1].r !== 1;
+      if (hasAce && hasTen) return { tier: 3, total: 21, name: 'Xì dách' };
+    }
+    if (hv.min > 21) return { tier: 0, total: hv.min, name: 'Quắc' };
+    if (cards.length === 5) return { tier: 2, total: hv.total, name: 'Ngũ linh' };
+    return { tier: 1, total: hv.total, name: hv.total + ' điểm' };
+  }
+
+  // So sánh 2 bài theo khóa (tier, total): >0 = a thắng, <0 = a thua, 0 = huề.
+  // Hai bài cùng quắc luôn huề (không so tổng).
+  function compareHands(a, b) {
+    if (a.tier !== b.tier) return a.tier > b.tier ? 1 : -1;
+    if (a.tier === 0) return 0;
+    if (a.total !== b.total) return a.total > b.total ? 1 : -1;
+    return 0;
+  }
+
+  function isSpecial(ev) { return ev.tier >= 2; } // xì bàn / xì dách / ngũ linh: thắng ăn gấp đôi
+
+  function genToken() {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    var t = '';
+    for (var i = 0; i < 10; i++) t += chars.charAt(Math.floor(Math.random() * chars.length));
+    return t;
+  }
+
+  // ================= Xu (số dư) — phía có thẩm quyền =================
+  function getXu(pid) {
+    if (isLocal) return localXu[pid] || 0;
+    return seats[pid] ? (seats[pid].xu || 0) : 0;
+  }
+  function addXu(pid, delta) {
+    if (isLocal) { localXu[pid] = (localXu[pid] || 0) + delta; return; }
+    if (seats[pid]) seats[pid].xu = (seats[pid].xu || 0) + delta;
+  }
+  var localXu = [];
+
+  // Người chơi pid còn kết nối không? (local: luôn có mặt)
+  function pidConnected(pid) {
+    if (isLocal) return true;
+    if (online && isHost) return !!(seats[pid] && seats[pid].connected);
+    for (var i = 0; i < lobbyPlayers.length; i++) {
+      if (lobbyPlayers[i].pid === pid) return !!lobbyPlayers[i].connected;
+    }
+    return true;
+  }
+
+  // ================= Dựng phần tử lá bài =================
+  function cardEl(c) {
+    var d = document.createElement('div');
+    d.className = 'pcard' + (SUIT_RED[c.s] ? ' red' : '');
+    var rk = document.createElement('span');
+    rk.className = 'rk';
+    rk.textContent = rankLabel(c.r);
+    var st = document.createElement('span');
+    st.className = 'st';
+    st.textContent = SUITS[c.s];
+    d.appendChild(rk);
+    d.appendChild(st);
+    return d;
+  }
+  function cardBackEl() {
+    var d = document.createElement('div');
+    d.className = 'pcard back';
+    d.textContent = '✦';
+    return d;
+  }
+  function fillCards(container, cards, backs) {
+    container.innerHTML = '';
+    if (cards) {
+      cards.forEach(function (c) { container.appendChild(cardEl(c)); });
+    } else {
+      for (var i = 0; i < (backs || 0); i++) container.appendChild(cardBackEl());
+    }
+  }
+
+  // Bài của trang này ở thời điểm hiện tại (host lấy từ G; local lấy theo màn che)
+  function currentMyCards() {
+    if (isLocal) {
+      if (!G || G.phase === 'over') return null;
+      if (coverPid !== null && !coverDismissed) return null; // đang bị che
+      var tp = G.turnPid;
+      return tp !== null && G.hands[tp] ? G.hands[tp] : null;
+    }
+    if (isAuthority && G && myPid !== null && G.hands[myPid]) return G.hands[myPid];
+    return myCards;
+  }
+  // pid mà panel "Bài của bạn" đang hiển thị
+  function panelPid() {
+    if (isLocal) return G ? G.turnPid : null;
+    return myPid;
+  }
+
+  // ================= Vẽ giao diện =================
+  function narrateEvents(events) {
+    if (!events || !events.length) return '';
+    var parts = [];
+    events.forEach(function (ev) {
+      var nm = playerName(ev.pid);
+      if (ev.type === 'hit') parts.push(nm + ' rút thêm 1 lá.');
+      else if (ev.type === 'stand') parts.push(nm + ' dằng bài.');
+      else if (ev.type === 'bust') parts.push('💥 ' + nm + ' quắc!');
+      else if (ev.type === 'ngulinh') parts.push('🎉 ' + nm + ' ngũ linh!');
+      else if (ev.type === 'dealerreveal') parts.push('🏦 Tới lượt nhà cái ' + playerName(ev.pid) + ' xét bài — bài nhà cái đã lật ngửa.');
+      else if (ev.type === 'settle') parts.push('🏁 Đã xét bài xong — xem kết quả bên dưới.');
+      else if (ev.type === 'autostand') parts.push(nm + ' mất kết nối — máy đánh thay.');
+    });
+    return parts.join(' ');
+  }
+
+  function rowStateText(p) {
+    // p: phần tử của view.players (trong ván) — trạng thái công khai, không lộ bài
+    if (!view) return { text: '', cls: '' };
+    if (view.phase === 'over') {
+      var res = null;
+      if (view.settle) {
+        for (var i = 0; i < view.settle.results.length; i++) {
+          if (view.settle.results[i].pid === p.pid) res = view.settle.results[i];
+        }
+      }
+      if (p.pid === view.dealerPid) return { text: 'Nhà cái: ' + (view.settle && view.settle.dealerHandName ? view.settle.dealerHandName : ''), cls: '' };
+      if (!res) return { text: '', cls: '' };
+      if (res.outcome === 'win') return { text: 'Thắng +' + res.delta + ' xu', cls: 'good' };
+      if (res.outcome === 'draw') return { text: 'Huề', cls: '' };
+      if (res.outcome === 'bust') return { text: 'Quắc — thua ' + (-res.delta) + ' xu', cls: 'bad' };
+      return { text: 'Thua ' + (-res.delta) + ' xu', cls: 'bad' };
+    }
+    if (!p.connected) return { text: 'Mất kết nối — máy đánh thay', cls: 'bad' };
+    if (p.busted) return { text: '💥 Quắc — đã thua cược', cls: 'bad' };
+    if (p.ngulinh) return { text: '🎉 Ngũ linh — chờ xét bài', cls: 'good' };
+    if (p.done) return { text: 'Đã xong lượt', cls: '' };
+    if (view.turnPid === p.pid) return { text: view.phase === 'dealer' ? 'Đang xét bài…' : 'Đang rút / dằng…', cls: '' };
+    if (view.phase === 'con' && p.pid !== view.dealerPid) return { text: 'Chờ tới lượt', cls: '' };
+    return { text: 'Chờ nhà cái xét bài', cls: '' };
+  }
+
+  function renderPlayers() {
+    playersListEl.innerHTML = '';
+    var i, p;
+    if (view) {
+      for (i = 0; i < view.players.length; i++) {
+        p = view.players[i];
+        var row = document.createElement('div');
+        var isDealer = p.pid === view.dealerPid;
+        row.className = 'prow' + (isDealer ? ' dealer' : '') + (view.turnPid === p.pid && view.phase !== 'over' ? ' turn' : '');
+        var head = document.createElement('div');
+        head.className = 'phead';
+        var left = document.createElement('span');
+        var nm = document.createElement('span');
+        nm.className = 'pname';
+        nm.textContent = playerName(p.pid) + (p.pid === myPid && online ? ' (bạn)' : '');
+        var badge = document.createElement('span');
+        badge.className = 'pbadge' + (isDealer ? '' : ' con');
+        badge.textContent = isDealer ? '🏦 Nhà cái' : 'Nhà con';
+        left.appendChild(nm);
+        left.appendChild(document.createTextNode(' '));
+        left.appendChild(badge);
+        var right = document.createElement('span');
+        var xu = document.createElement('span');
+        xu.className = 'pxu';
+        xu.textContent = (view.balances[p.pid] != null ? view.balances[p.pid] : 0) + ' xu';
+        var st = rowStateText(p);
+        var state = document.createElement('span');
+        state.className = 'pstate' + (st.cls ? ' ' + st.cls : '');
+        state.textContent = st.text;
+        right.appendChild(xu);
+        if (st.text) { right.appendChild(document.createTextNode(' · ')); right.appendChild(state); }
+        head.appendChild(left);
+        head.appendChild(right);
+        row.appendChild(head);
+        var cardsDiv = document.createElement('div');
+        cardsDiv.className = 'cards';
+        if (view.phase === 'over' && view.settle && view.settle.hands[p.pid]) {
+          fillCards(cardsDiv, view.settle.hands[p.pid], 0);
+        } else if (isDealer && view.dealerCards) {
+          fillCards(cardsDiv, view.dealerCards, 0);
+        } else if (online && p.pid === myPid && myCards) {
+          fillCards(cardsDiv, myCards, 0); // bài của chính mình: luôn ngửa với mình
+        } else if (isLocal && G && coverDismissed && coverPid === p.pid && G.phase !== 'over') {
+          fillCards(cardsDiv, G.hands[p.pid], 0); // cùng máy: người đang cầm máy đã bỏ màn che
+        } else {
+          fillCards(cardsDiv, null, p.count);
+        }
+        row.appendChild(cardsDiv);
+        playersListEl.appendChild(row);
+      }
+      tableNoteEl.textContent = view.phase === 'over'
+        ? 'Ván đã xét bài xong — toàn bộ bài đã lật ngửa.'
+        : 'Bài của nhà con được úp cho tới khi xét bài; bài nhà cái lật ngửa khi tới lượt nhà cái.';
+      return;
+    }
+    // Chưa có ván: hiện danh sách sảnh
+    if (!lobbyPlayers.length) {
+      tableNoteEl.textContent = 'Chưa bắt đầu ván nào.';
+      return;
+    }
+    for (i = 0; i < lobbyPlayers.length; i++) {
+      p = lobbyPlayers[i];
+      var row2 = document.createElement('div');
+      row2.className = 'prow' + (p.isDealer ? ' dealer' : '');
+      var head2 = document.createElement('div');
+      head2.className = 'phead';
+      var nm2 = document.createElement('span');
+      nm2.className = 'pname';
+      nm2.textContent = p.name || ('Người chơi ' + (p.pid + 1));
+      var badge2 = document.createElement('span');
+      badge2.className = 'pbadge' + (p.isDealer ? '' : ' con');
+      badge2.textContent = p.isDealer ? '🏦 Nhà cái ván tới' : 'Nhà con';
+      var right2 = document.createElement('span');
+      right2.className = 'pxu';
+      right2.textContent = (p.xu || 0) + ' xu';
+      head2.appendChild(nm2);
+      head2.appendChild(document.createTextNode(' '));
+      head2.appendChild(badge2);
+      head2.appendChild(right2);
+      row2.appendChild(head2);
+      playersListEl.appendChild(row2);
+    }
+    tableNoteEl.textContent = 'Đang ở sảnh chờ — ván mới bắt đầu khi mọi người sẵn sàng.';
+  }
+
+  // Lượt hành động hiện tại có thuộc về trang này không? Trả pid đang hành động hoặc null.
+  function myActionPid() {
+    if (!view || view.phase === 'over') return null;
+    if (isLocal) {
+      if (!G) return null;
+      if (coverPid !== null && !coverDismissed) return null; // chưa bỏ màn che
+      return G.turnPid;
+    }
+    if (isSpectator || myPid === null) return null;
+    if (view.phase === 'con' && view.turnPid === myPid) return myPid;
+    if (view.phase === 'dealer' && view.dealerPid === myPid) return myPid;
+    return null;
+  }
+
+  function renderMine() {
+    var cards = currentMyCards();
+    var pp = panelPid();
+    myHandTitleEl.textContent = isLocal
+      ? (pp !== null && pp !== undefined ? 'Bài của ' + playerName(pp) : 'Bài của bạn')
+      : 'Bài của bạn';
+    fillCards(myCardsEl, cards, 0);
+    var actPid = myActionPid();
+    var ev = cards ? evalHand(cards) : null;
+    if (!cards) {
+      myHandInfoEl.textContent = isLocal && view && coverPid !== null
+        ? 'Bài đang úp — bấm "Xem bài" ở màn che để xem.'
+        : '—';
+    } else if (ev.tier === 0) {
+      myHandInfoEl.textContent = '💥 ' + ev.name + ' (' + ev.total + ' điểm)';
+    } else {
+      myHandInfoEl.textContent = ev.name + (ev.tier >= 2 ? ' 🎉' : '');
+    }
+    var canActNow = actPid !== null && cards;
+    btnHit.disabled = !canActNow;
+    var tooYoung = ev && ev.tier === 1 && ev.total < 16;
+    btnStand.disabled = !canActNow || !!tooYoung;
+    myActionNoteEl.textContent = canActNow
+      ? (tooYoung ? 'Chưa đủ tuổi (' + ev.total + ' điểm < 16) — bắt buộc rút thêm.' : 'Tới lượt bạn: rút thêm hoặc dằng bài.')
+      : '';
+  }
+
+  function renderStatus(events) {
+    var narr = narrateEvents(events);
+    if (!online && !isLocal) { setStatus('Chọn cách chơi bên trên để bắt đầu.', ''); return; }
+    if (online && isSpectator) {
+      if (!view) { setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ từ chủ phòng…'); return; }
+      if (view.phase === 'over') { setStatus('🏁 Ván đã kết thúc.', 'Bạn đang xem ván đấu này.'); return; }
+      setStatus(narr || (view.phase === 'dealer'
+        ? '🏦 Nhà cái ' + playerName(view.dealerPid) + ' đang xét bài…'
+        : 'Lượt của ' + playerName(view.turnPid) + '…'), 'Bạn đang xem ván đấu này.');
+      return;
+    }
+    if (!view) {
+      if (isLocal) { setStatus('Chọn số người chơi rồi bấm Bắt đầu.', 'Chế độ cùng máy: 2–6 người thay phiên nhau, có màn che chuyền máy.'); return; }
+      setStatus(isHost ? 'Đang chờ người chơi vào phòng…' : 'Đang kết nối tới phòng…', 'Vào sảnh chờ và bấm Sẵn sàng cùng mọi người để bắt đầu.');
+      return;
+    }
+    if (view.phase === 'over') {
+      setStatus(narr || '🏁 Ván đã kết thúc.', 'Bấm "Ván tiếp" để về sảnh chờ — nhà cái sẽ luân phiên sang người tiếp theo.');
+      btnRematch.classList.remove('hidden');
+      return;
+    }
+    btnRematch.classList.add('hidden');
+    var tp = view.turnPid;
+    if (view.phase === 'dealer') {
+      if (!isLocal && view.dealerPid === myPid) setStatus(narr || '🏦 Bạn là nhà cái — tới lượt bạn xét bài.', 'Đủ 16 điểm mới được dằng; quắc là thua mọi nhà con còn đứng.');
+      else setStatus(narr || ('🏦 Nhà cái ' + playerName(view.dealerPid) + ' đang xét bài…'), 'Bài nhà cái đã lật ngửa.');
+      return;
+    }
+    // Giai đoạn nhà con
+    if (!pidConnected(tp)) {
+      setStatus(narr || (playerName(tp) + ' mất kết nối — máy đánh thay…'), 'Ván đấu vẫn tiếp tục.');
+    } else if (isLocal) {
+      setStatus(narr || ('Lượt của ' + playerName(tp) + '.'), coverPid !== null && !coverDismissed ? 'Chuyền máy cho ' + playerName(tp) + ' rồi bấm "Xem bài".' : 'Rút thêm hoặc dằng bài (đủ 16 điểm mới được dằng).');
+    } else if (tp === myPid) {
+      setStatus(narr || 'Lượt của bạn!', 'Rút thêm hoặc dằng bài (đủ 16 điểm mới được dằng).');
+    } else {
+      setStatus(narr || ('Lượt của ' + playerName(tp) + '…'), 'Chờ ' + playerName(tp) + ' rút / dằng.');
+    }
+  }
+
+  function renderLobby() {
+    lobbyBody.innerHTML = '';
+    lobbyPlayers.forEach(function (p) {
+      var tr = document.createElement('tr');
+      var tdName = document.createElement('td');
+      tdName.textContent = p.name || ('Người chơi ' + (p.pid + 1));
+      var tdRole = document.createElement('td');
+      tdRole.textContent = p.isDealer ? '🏦 Nhà cái' : 'Nhà con';
+      var tdXu = document.createElement('td');
+      tdXu.textContent = String(p.xu || 0);
+      var tdState = document.createElement('td');
+      tdState.textContent = !p.connected ? 'Mất kết nối' : (p.ready ? 'Đã sẵn sàng ✓' : 'Chưa sẵn sàng');
+      tr.appendChild(tdName); tr.appendChild(tdRole); tr.appendChild(tdXu); tr.appendChild(tdState);
+      lobbyBody.appendChild(tr);
+    });
+    var connCount = 0, readyCount = 0;
+    lobbyPlayers.forEach(function (p) { if (p.connected) { connCount++; if (p.ready) readyCount++; } });
+    lobbyNote.textContent = connCount < 2
+      ? 'Đang chờ thêm người chơi… (cần ít nhất 2 người)'
+      : ('Đang có ' + connCount + ' người, ' + readyCount + ' đã sẵn sàng. Ván bắt đầu khi tất cả đều sẵn sàng.');
+    var mine = null;
+    lobbyPlayers.forEach(function (p) { if (p.pid === myPid) mine = p; });
+    if (mine) {
+      btnLobbyReady.disabled = false;
+      btnLobbyReady.textContent = mine.ready ? 'Đã sẵn sàng ✓ (bấm để huỷ)' : '✅ Sẵn sàng';
+      btnLobbyReady.classList.toggle('toggled', !!mine.ready);
+    } else {
+      btnLobbyReady.disabled = true;
+      btnLobbyReady.textContent = '✅ Sẵn sàng';
+    }
+    var showLobby = online && !isSpectator && myPid !== null && !view;
+    lobbyOverlay.classList.toggle('hidden', !showLobby);
+  }
+
+  function renderCover() {
+    if (!isLocal || !G || G.phase === 'over' || coverPid === null || coverDismissed) {
+      coverOverlay.classList.add('hidden');
+      return;
+    }
+    var isDealerTurn = G.phase === 'dealer';
+    coverTitleEl.textContent = isDealerTurn ? '🏦 Lượt nhà cái' : '📱 Chuyền máy';
+    coverTextEl.textContent = isDealerTurn
+      ? 'Đưa máy cho nhà cái ' + playerName(coverPid) + ' để xét bài. Bài nhà cái sẽ được lật ngửa sau khi bấm xem.'
+      : 'Đưa máy cho ' + playerName(coverPid) + ' — chỉ người này được xem bài của mình.';
+    btnCoverOk.textContent = '👁 Xem bài của ' + playerName(coverPid);
+    coverOverlay.classList.remove('hidden');
+  }
+
+  function renderAll(events) {
+    renderPlayers();
+    renderMine();
+    renderLobby();
+    renderCover();
+    renderStatus(events);
+    syncEndPopup();
+  }
+
+  /* ---------- Popup kết quả ván ----------
+     Hiện đúng một lần cho mỗi ván kết thúc (nhận diện bằng token ván):
+     đồng bộ lại trạng thái 'over' không hiện lại; bấm Đóng thì không tự
+     bật lại; ván mới bắt đầu / về sảnh thì tự đóng. */
+  var endPopupKey = null, endPopupDismissed = false;
+  function hideEndPopup() {
+    endOverlay.classList.add('hidden');
+    endPopupKey = null;
+    endPopupDismissed = false;
+  }
+  function deltaText(d) {
+    if (d > 0) return '+' + d + ' xu';
+    if (d < 0) return d + ' xu';
+    return '0 xu';
+  }
+  function syncEndPopup() {
+    if (!view || view.phase !== 'over' || !view.settle) {
+      if (endPopupKey !== null || !endOverlay.classList.contains('hidden')) hideEndPopup();
+      return;
+    }
+    var key = (view.token || 'local') + '|settle';
+    if (key !== endPopupKey) { endPopupKey = key; endPopupDismissed = false; }
+    if (endPopupDismissed) return;
+    endTitleEl.textContent = '🏁 Kết quả ván';
+    endResultsEl.innerHTML = '';
+    var dealerPid = view.dealerPid;
+    view.settle.results.forEach(function (res) {
+      var hand = view.settle.hands[res.pid] || [];
+      var line = document.createElement('div');
+      line.className = 'rline';
+      var top = document.createElement('div');
+      var nm = document.createElement('strong');
+      nm.textContent = playerName(res.pid);
+      top.appendChild(nm);
+      top.appendChild(document.createTextNode(' — ' + hand.map(cardText).join(' ') + ' · ' + res.handName + ' → '));
+      var dl = document.createElement('span');
+      dl.className = 'rdelta ' + (res.delta > 0 ? 'pos' : res.delta < 0 ? 'neg' : 'zero');
+      dl.textContent = deltaText(res.delta);
+      top.appendChild(dl);
+      line.appendChild(top);
+      endResultsEl.appendChild(line);
+    });
+    var dHand = view.settle.hands[dealerPid] || [];
+    var dLine = document.createElement('div');
+    dLine.className = 'rline';
+    var dTop = document.createElement('div');
+    var dNm = document.createElement('strong');
+    dNm.textContent = '🏦 ' + playerName(dealerPid) + ' (nhà cái)';
+    dTop.appendChild(dNm);
+    dTop.appendChild(document.createTextNode(' — ' + dHand.map(cardText).join(' ') + ' · ' + (view.settle.dealerHandName || '') + ' → '));
+    var dDl = document.createElement('span');
+    dDl.className = 'rdelta ' + (view.settle.dealerDelta > 0 ? 'pos' : view.settle.dealerDelta < 0 ? 'neg' : 'zero');
+    dDl.textContent = deltaText(view.settle.dealerDelta);
+    dTop.appendChild(dDl);
+    dLine.appendChild(dTop);
+    endResultsEl.appendChild(dLine);
+    var myRes = null;
+    if (!isLocal && myPid !== null && myPid !== dealerPid) {
+      for (var i = 0; i < view.settle.results.length; i++) {
+        if (view.settle.results[i].pid === myPid) myRes = view.settle.results[i];
+      }
+      endScoreEl.textContent = myRes ? ('Ván này bạn ' + (myRes.delta > 0 ? 'thắng ' + deltaText(myRes.delta) : myRes.delta < 0 ? 'thua ' + deltaText(myRes.delta) : 'huề') + ' · Số dư: ' + (view.balances[myPid] || 0) + ' xu')
+        : '';
+    } else if (!isLocal && myPid === dealerPid) {
+      endScoreEl.textContent = 'Bạn là nhà cái — ván này ' + deltaText(view.settle.dealerDelta) + ' · Số dư: ' + (view.balances[myPid] || 0) + ' xu';
+    } else {
+      endScoreEl.textContent = '';
+    }
+    btnEndRematch.style.display = isSpectator ? 'none' : '';
+    endOverlay.classList.remove('hidden');
+  }
+  btnEndClose.addEventListener('click', function () { endPopupDismissed = true; endOverlay.classList.add('hidden'); });
+  btnEndRematch.addEventListener('click', function () { btnRematch.click(); });
+
+  // ================= Điều phối ván đấu (chỉ phía có thẩm quyền: host / máy local) =================
+  function setXu(pid, v) {
+    if (isLocal) { localXu[pid] = v; return; }
+    if (seats[pid]) seats[pid].xu = v;
+  }
+
+  // Màn che chuyền máy (chỉ local): mỗi khi tới lượt một người mới thì che bài lại
+  function setCoverFor(pid) {
+    if (!isLocal) return;
+    if (coverPid !== pid) { coverPid = pid; coverDismissed = false; }
+  }
+
+  // Bản PUBLIC của ván: chỉ chứa số lá của từng người, trạng thái công khai,
+  // bài nhà cái (khi tới lượt nhà cái) và toàn bộ bài khi đã xét xong.
+  // TUYỆT ĐỐI không chứa bài úp của nhà con.
+  function buildView() {
+    var players = G.order.map(function (pid) {
+      var st = G.pstate[pid];
+      return {
+        pid: pid,
+        count: G.hands[pid].length,
+        done: !!st.done, stood: !!st.stood, busted: !!st.busted, ngulinh: !!st.ngulinh,
+        connected: pidConnected(pid)
+      };
+    });
+    var balances = {};
+    G.order.forEach(function (pid) { balances[pid] = getXu(pid); });
+    var v = {
+      token: G.token,
+      phase: G.phase,
+      dealerPid: G.dealerPid,
+      turnPid: G.turnPid,
+      players: players,
+      balances: balances,
+      dealerCards: (G.phase === 'dealer' || G.phase === 'over') ? G.hands[G.dealerPid].slice() : null,
+      settle: null
+    };
+    if (G.phase === 'over') {
+      var hands = {};
+      G.order.forEach(function (pid) { hands[pid] = G.hands[pid].slice(); });
+      v.settle = {
+        hands: hands,
+        results: G.results || [],
+        dealerDelta: G.dealerDelta || 0,
+        dealerHandName: G.dealerHandName || ''
+      };
+    }
+    return v;
+  }
+
+  // Phát bản public cho mọi máy + tự vẽ lại ở máy mình
+  function publishRound(events) {
+    if (!G) return;
+    view = buildView();
+    if (online && isHost) broadcastAll({ type: 'round', view: view, events: events || [] });
+    renderAll(events || []);
+  }
+
+  // Gửi RIÊNG bài của một người chơi cho chính họ (không bao giờ phát công khai)
+  function unicastHand(pid) {
+    if (!online || !isHost || !G) return;
+    if (pid === myPid) return; // host tự có bài trong G
+    var rec = seats[pid];
+    if (rec && rec.conn) sendTo(rec.conn, { type: 'yourhand', token: G.token, cards: G.hands[pid].slice() });
+  }
+
+  function drawCard() {
+    return G.deck[G.deckIdx++];
+  }
+
+  // Bắt đầu một ván mới với danh sách pid tham gia (theo thứ tự ghế)
+  function startRound(participants) {
+    if (!participants || participants.length < 2) return;
+    // Cứu trợ: ai không đủ tiền cược thì được đưa về mức khởi điểm
+    participants.forEach(function (pid) { if (getXu(pid) < BET) setXu(pid, START_XU); });
+    var dealer = participants.indexOf(nextDealerPid) !== -1 ? nextDealerPid : participants[0];
+    var deck = deckOverride ? deckOverride.slice() : makeDeck();
+    deckOverride = null;
+    G = {
+      token: genToken(),
+      dealerPid: dealer,
+      order: participants.slice(),
+      deck: deck,
+      deckIdx: 0,
+      hands: {},
+      pstate: {},
+      phase: 'con',
+      turnPid: null,
+      results: null,
+      dealerDelta: 0,
+      dealerHandName: ''
+    };
+    var i, pid;
+    for (i = 0; i < participants.length; i++) {
+      pid = participants[i];
+      G.hands[pid] = [];
+      G.pstate[pid] = { done: false, stood: false, busted: false, ngulinh: false, delta: 0 };
+    }
+    // Chia 2 vòng, mỗi vòng mỗi người 1 lá (theo thứ tự ghế)
+    for (var round = 0; round < 2; round++) {
+      for (i = 0; i < participants.length; i++) G.hands[participants[i]].push(drawCard());
+    }
+    // Nhà con đặt cược
+    participants.forEach(function (p) {
+      if (p !== dealer) { addXu(p, -BET); G.pstate[p].delta = -BET; }
+    });
+    roundsStarted++;
+    if (online && isHost) {
+      participants.forEach(function (p) { unicastHand(p); });
+      participants.forEach(function (p) { if (seats[p]) seats[p].ready = false; });
+    }
+    if (isLocal) syncLocalLobby(dealer);
+    advanceConTurn();
+  }
+
+  function advanceConTurn() {
+    if (!G || G.phase !== 'con') return;
+    var next = -1;
+    for (var i = 0; i < G.order.length; i++) {
+      var pid = G.order[i];
+      if (pid !== G.dealerPid && !G.pstate[pid].done) { next = pid; break; }
+    }
+    if (next === -1) { beginDealerTurn(); return; }
+    beginConTurn(next);
+  }
+
+  function beginConTurn(pid) {
+    G.turnPid = pid;
+    var ev = evalHand(G.hands[pid]);
+    if (ev.tier >= 3) {
+      // Xì dách / xì bàn: xong lượt ngay, không rút — và KHÔNG công bố bài đặc biệt
+      G.pstate[pid].done = true;
+      publishRound([]);
+      advanceConTurn();
+      return;
+    }
+    setCoverFor(pid);
+    publishRound([]);
+    if (!pidConnected(pid)) scheduleAuto(pid);
+  }
+
+  // Sau khi một người nhận thêm lá: kiểm tra quắc / đủ 5 lá. Trả true nếu lượt đã kết thúc.
+  function afterCard(pid, events) {
+    var ev = evalHand(G.hands[pid]);
+    var isDealer = pid === G.dealerPid;
+    if (ev.tier === 0) {
+      G.pstate[pid].busted = true;
+      G.pstate[pid].done = true;
+      if (!isDealer) {
+        // Nhà con quắc: mất cược ngay cho nhà cái, kể cả nhà cái quắc sau đó
+        addXu(G.dealerPid, BET);
+      }
+      events.push({ type: 'bust', pid: pid });
+      publishRound(events);
+      if (isDealer) settleRound(); else advanceConTurn();
+      return true;
+    }
+    if (G.hands[pid].length >= 5) {
+      G.pstate[pid].ngulinh = true;
+      G.pstate[pid].done = true;
+      events.push({ type: 'ngulinh', pid: pid });
+      publishRound(events);
+      if (isDealer) settleRound(); else advanceConTurn();
+      return true;
+    }
+    return false;
+  }
+
+  // Hành động rút bài (phía có thẩm quyền thực thi). Trả true nếu hợp lệ.
+  function applyHit(pid) {
+    if (!G || G.phase === 'over' || G.turnPid !== pid) return false;
+    if (G.pstate[pid].done) return false;
+    G.hands[pid].push(drawCard());
+    unicastHand(pid);
+    var events = [{ type: 'hit', pid: pid }];
+    if (!afterCard(pid, events)) publishRound(events);
+    return true;
+  }
+
+  // Hành động dằng bài. Dưới 16 điểm (bài thường) thì bị TỪ CHỐI — phải rút thêm.
+  function applyStand(pid) {
+    if (!G || G.phase === 'over' || G.turnPid !== pid) return false;
+    if (G.pstate[pid].done) return false;
+    var ev = evalHand(G.hands[pid]);
+    if (ev.tier === 1 && ev.total < 16) return false; // chưa đủ tuổi
+    G.pstate[pid].stood = true;
+    G.pstate[pid].done = true;
+    var events = [{ type: 'stand', pid: pid }];
+    publishRound(events);
+    if (pid === G.dealerPid) settleRound(); else advanceConTurn();
+    return true;
+  }
+
+  function doAction(pid, kind) {
+    if (kind === 'hit') return applyHit(pid);
+    if (kind === 'stand') return applyStand(pid);
+    return false;
+  }
+
+  // Máy đánh thay cho người mất kết nối: dằng ngay nếu ≥16, ngược lại rút tới khi
+  // ≥16, đủ 5 lá hoặc quắc (giữ ván chạy tiếp).
+  function scheduleAuto(pid) {
+    if (autoTimer) clearTimeout(autoTimer);
+    var tk = G ? G.token : null;
+    autoTimer = setTimeout(function () {
+      autoTimer = null;
+      if (!G || G.token !== tk || G.turnPid !== pid || G.phase === 'over') return;
+      autoPlay(pid);
+    }, 650);
+  }
+
+  function autoPlay(pid) {
+    var events = [{ type: 'autostand', pid: pid }];
+    var guard = 0;
+    while (guard++ < 5) {
+      var ev = evalHand(G.hands[pid]);
+      if (ev.tier === 0) break;
+      if (G.hands[pid].length >= 5) break;
+      if (ev.total >= 16) break;
+      G.hands[pid].push(drawCard());
+    }
+    unicastHand(pid);
+    if (!afterCard(pid, events)) {
+      // Không quắc, không đủ 5 lá: tức là đã ≥16 → dằng
+      G.pstate[pid].stood = true;
+      G.pstate[pid].done = true;
+      publishRound(events);
+      if (pid === G.dealerPid) settleRound(); else advanceConTurn();
+    }
+  }
+
+  function beginDealerTurn() {
+    G.phase = 'dealer';
+    G.turnPid = G.dealerPid;
+    var ev = evalHand(G.hands[G.dealerPid]);
+    if (ev.tier >= 3) {
+      // Nhà cái có xì dách / xì bàn: không rút, xét bài luôn (bài vẫn lật ngửa)
+      G.pstate[G.dealerPid].done = true;
+      publishRound([{ type: 'dealerreveal', pid: G.dealerPid }]);
+      settleRound();
+      return;
+    }
+    setCoverFor(G.dealerPid);
+    publishRound([{ type: 'dealerreveal', pid: G.dealerPid }]);
+    if (!pidConnected(G.dealerPid)) scheduleAuto(G.dealerPid);
+  }
+
+  // Xét bài: so từng nhà con còn đứng với nhà cái, cộng/trừ xu đúng luật ăn gấp đôi
+  function settleRound() {
+    if (!G || G.phase === 'over') return;
+    G.phase = 'over';
+    G.turnPid = null;
+    coverPid = null;
+    coverDismissed = false;
+    var dealerEv = evalHand(G.hands[G.dealerPid]);
+    G.dealerHandName = dealerEv.name;
+    var results = [];
+    var dealerDelta = 0;
+    G.order.forEach(function (pid) {
+      if (pid === G.dealerPid) return;
+      var st = G.pstate[pid];
+      if (st.busted) {
+        // Đã mất cược ngay lúc quắc (nhà cái đã nhận ở bước đó)
+        st.delta = -BET;
+        dealerDelta += BET;
+        results.push({ pid: pid, outcome: 'bust', delta: -BET, handName: 'Quắc' });
+        return;
+      }
+      var ce = evalHand(G.hands[pid]);
+      var cmp = compareHands(ce, dealerEv);
+      var delta, outcome;
+      if (cmp > 0) {
+        var pay = isSpecial(ce) ? 2 * BET : BET; // thắng bằng bài đặc biệt ăn gấp đôi
+        delta = pay;
+        outcome = 'win';
+        addXu(pid, BET + pay);       // nhận lại cược + tiền thắng
+        addXu(G.dealerPid, -pay);    // nhà cái trả tiền thắng
+        dealerDelta -= pay;
+      } else if (cmp === 0) {
+        delta = 0;
+        outcome = 'draw';
+        addXu(pid, BET);             // huề: nhận lại cược
+      } else {
+        var loss = isSpecial(dealerEv) ? 2 * BET : BET; // nhà cái thắng bằng bài đặc biệt: con thua gấp đôi
+        delta = -loss;
+        outcome = 'lose';
+        if (loss > BET) addXu(pid, -(loss - BET)); // phần thua thêm ngoài cược
+        addXu(G.dealerPid, loss);                  // nhà cái nhận cược (+ phần thêm)
+        dealerDelta += loss;
+      }
+      st.delta = delta;
+      results.push({ pid: pid, outcome: outcome, delta: delta, handName: ce.name });
+    });
+    G.results = results;
+    G.dealerDelta = dealerDelta;
+    publishRound([{ type: 'settle' }]);
+    if (online && isHost) broadcastLobbyDataOnly();
+  }
+
+  // Nhà cái mất kết nối giữa ván: hủy ván, hoàn toàn bộ cược
+  function voidRound() {
+    if (!G || G.phase === 'over') return;
+    var bustedCount = 0;
+    G.order.forEach(function (pid) {
+      if (pid === G.dealerPid) return;
+      addXu(pid, BET); // hoàn cược cho mọi nhà con (kể cả người đã quắc)
+      if (G.pstate[pid].busted) bustedCount++;
+    });
+    if (bustedCount) addXu(G.dealerPid, -BET * bustedCount); // nhà cái trả lại phần đã nhận từ người quắc
+    var wasDealer = G.dealerPid;
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    G = null;
+    view = null;
+    myCards = null;
+    coverPid = null;
+    coverDismissed = false;
+    nextDealerPid = computeNextDealer(wasDealer);
+    for (var s = 0; s < MAX_SEATS; s++) if (seats[s]) seats[s].ready = false;
+    btnRematch.classList.add('hidden');
+    if (online && isHost) {
+      // Gửi lobby TRƯỚC lobby-phase: tin lobby cũng kích hoạt renderAll phía khách,
+      // nếu gửi sau sẽ ghi đè mất dòng thông báo hủy ván trên máy khách.
+      broadcastLobby();
+      broadcastAll({ type: 'lobby-phase', voided: true });
+    }
+    renderAll();
+    setStatus('🏦 Nhà cái mất kết nối — ván hủy, hoàn xu!', 'Toàn bộ cược đã được hoàn. Mọi người bấm Sẵn sàng để bắt đầu ván mới.');
+  }
+
+  function computeNextDealer(afterPid) {
+    var cands = [];
+    var i;
+    if (isLocal) {
+      for (i = 0; i < localPlayerCount; i++) cands.push(i);
+    } else {
+      for (i = 0; i < MAX_SEATS; i++) if (seats[i]) cands.push(i);
+    }
+    if (!cands.length) return afterPid;
+    for (i = 0; i < cands.length; i++) if (cands[i] > afterPid) return cands[i];
+    return cands[0];
+  }
+
+  // Về sảnh chờ sau khi ván kết thúc (giữ số xu; nhà cái luân phiên)
+  function backToLobby() {
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    var curDealer = G ? G.dealerPid : nextDealerPid;
+    G = null;
+    view = null;
+    myCards = null;
+    coverPid = null;
+    coverDismissed = false;
+    nextDealerPid = computeNextDealer(curDealer);
+    for (var s = 0; s < MAX_SEATS; s++) if (seats[s]) seats[s].ready = false;
+    btnRematch.classList.add('hidden');
+    if (online && isHost) {
+      broadcastLobby();
+      broadcastAll({ type: 'lobby-phase' });
+    }
+    renderAll();
+    setStatus('Đã về sảnh chờ.', 'Mọi người bấm Sẵn sàng để bắt đầu ván mới — nhà cái ván tới: ' + playerName(nextDealerPid) + '.');
+  }
+
+  // ================= Sảnh chờ (host) =================
+  function lobbyPayload() {
+    var players = [];
+    for (var s = 0; s < MAX_SEATS; s++) {
+      if (!seats[s]) continue;
+      players.push({
+        pid: s,
+        name: seats[s].name || '',
+        xu: seats[s].xu || 0,
+        ready: !!seats[s].ready,
+        connected: !!seats[s].connected,
+        isDealer: s === nextDealerPid
+      });
+    }
+    return { players: players, phase: G ? (G.phase === 'over' ? 'over' : 'playing') : 'lobby' };
+  }
+
+  function broadcastLobby() {
+    if (!online || !isHost) return;
+    var p = lobbyPayload();
+    lobbyPlayers = p.players;
+    broadcastAll({ type: 'lobby', players: p.players, phase: p.phase });
+    renderAll();
+  }
+
+  // Chỉ cập nhật dữ liệu sảnh (số xu) cho khách mà không ép vẽ lại toàn bộ —
+  // dùng sau khi xét bài để cột Xu ở sảnh lần tới luôn đúng.
+  function broadcastLobbyDataOnly() {
+    if (!online || !isHost) return;
+    var p = lobbyPayload();
+    lobbyPlayers = p.players;
+    broadcastAll({ type: 'lobby', players: p.players, phase: p.phase });
+  }
+
+  function broadcastAll(obj) {
+    for (var s = 0; s < MAX_SEATS; s++) {
+      if (seats[s] && seats[s].conn) sendTo(seats[s].conn, obj);
+    }
+    spectatorConns.forEach(function (c) { sendTo(c, obj); });
+  }
+
+  var spectatorConns = [];
+
+  function checkStart() {
+    if (!online || !isHost) return;
+    if (G) return;
+    var present = [];
+    for (var s = 0; s < MAX_SEATS; s++) {
+      if (seats[s] && seats[s].connected) present.push(s);
+    }
+    if (present.length < 2) return;
+    for (var i = 0; i < present.length; i++) {
+      if (!seats[present[i]].ready) return;
+    }
+    startRound(present);
+    broadcastLobbyDataOnly();
+  }
+
+  // ================= Mạng phía host =================
+  function sendTo(c, obj) {
+    if (!c) return;
+    if (c.open) {
+      try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+    } else if (typeof c.on === 'function') {
+      // Hoãn gửi cho tới sự kiện 'open' để tin bắt tay không bị mất lặng lẽ
+      var sent = false;
+      c.on('open', function () {
+        if (sent) return;
+        sent = true;
+        try { c.send(obj); } catch (e) { /* bỏ qua lỗi gửi tạm thời */ }
+      });
+    }
+  }
+
+  // Tìm ghế cho một kết nối mới gửi hello:
+  // 1) ghế đã mất kết nối có cùng tên → lấy lại; 2) ghế trống (khi chưa vào ván);
+  // 3) ghế đã mất kết nối bất kỳ (lấy lại giữa ván); 4) không còn → khán giả (-1).
+  function assignSeat(guestName) {
+    var s;
+    for (s = 0; s < MAX_SEATS; s++) {
+      if (seats[s] && !seats[s].connected && seats[s].name && guestName && seats[s].name === guestName) return s;
+    }
+    var inGame = !!G;
+    if (!inGame) {
+      for (s = 0; s < MAX_SEATS; s++) if (!seats[s]) return s;
+    }
+    for (s = 0; s < MAX_SEATS; s++) {
+      if (seats[s] && !seats[s].connected) return s;
+    }
+    if (!inGame) {
+      for (s = 0; s < MAX_SEATS; s++) if (!seats[s]) return s;
+    }
+    return -1;
+  }
+
+  function hostOnHello(c, guestName) {
+    if (c._role) return;
+    var seat = assignSeat(guestName);
+    if (seat === -1) {
+      c._role = 'spectator';
+      spectatorConns.push(c);
+      sendTo(c, { type: 'welcome', as: 'spectator' });
+      sendTo(c, { type: 'sync', view: view, lobby: lobbyPayload() });
+      return;
+    }
+    var rec = seats[seat];
+    if (!rec) {
+      rec = seats[seat] = { conn: null, name: '', connected: false, ready: false, xu: START_XU };
+    }
+    if (rec.conn && rec.conn !== c) { try { rec.conn.close(); } catch (e) { /* bỏ qua */ } }
+    rec.conn = c;
+    rec.connected = true;
+    if (guestName) rec.name = sanitizeName(guestName);
+    c._role = 'player';
+    c._seat = seat;
+    var payload = lobbyPayload();
+    sendTo(c, { type: 'welcome', as: 'player', seat: seat, lobby: payload });
+    if (G) {
+      // Vào lại giữa ván / xem tiếp ván đã xét: đồng bộ ngay + gửi riêng bài của họ
+      sendTo(c, { type: 'sync', view: view, lobby: lobbyPayload() });
+      if (G.order.indexOf(seat) !== -1) unicastHand(seat);
+    }
+    broadcastLobby();
+    checkStart();
+  }
+
+  function hostHandleData(c, data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'hello') {
+      c._helloSeen = true;
+      if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
+      hostOnHello(c, data.name);
+      return;
+    }
+    if (c._role !== 'player') return; // khán giả chỉ gửi hello
+    var pid = c._seat;
+    if (data.type === 'ready') {
+      if (seats[pid] && !G) {
+        seats[pid].ready = !!data.ready;
+        broadcastLobby();
+        checkStart();
+      }
+    } else if (data.type === 'hit' || data.type === 'stand') {
+      if (!G || G.phase === 'over' || G.turnPid !== pid) return;
+      if (G.phase === 'con' && pid === G.dealerPid) return;
+      if (G.phase === 'dealer' && pid !== G.dealerPid) return;
+      var ok = doAction(pid, data.type);
+      if (!ok && data.type === 'stand') {
+        sendTo(c, { type: 'note', msg: 'Chưa đủ tuổi (dưới 16 điểm) — bắt buộc rút thêm!' });
+      }
+    } else if (data.type === 'rematch') {
+      if (G && G.phase === 'over') backToLobby();
+    } else if (data.type === 'name') {
+      if (seats[pid]) {
+        seats[pid].name = sanitizeName(data.name);
+        broadcastLobby();
+      }
+    }
+  }
+
+  function hostOnConnClose(c) {
+    if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
+    // LƯU Ý: không dùng c._closed làm cờ riêng — RelayConn của relay.js tự đặt
+    // _closed=true TRƯỚC khi bắn sự kiện 'close', sẽ làm hàm này thoát sớm luôn.
+    if (c._gone) return;
+    c._gone = true;
+    if (c._role === 'spectator') {
+      spectatorConns = spectatorConns.filter(function (x) { return x !== c; });
+      return;
+    }
+    if (c._role === 'player' && typeof c._seat === 'number') {
+      var rec = seats[c._seat];
+      if (rec && rec.conn === c) {
+        rec.conn = null;
+        rec.connected = false;
+        rec.ready = false;
+        var pid = c._seat;
+        if (G && G.phase !== 'over' && pid === G.dealerPid) {
+          // Nhà cái mất kết nối giữa ván → hủy ván, hoàn xu
+          broadcastLobbyDataOnly();
+          voidRound();
+          return;
+        }
+        broadcastLobby();
+        if (G && G.phase === 'con' && G.turnPid === pid) {
+          publishRound([]); // cập nhật trạng thái "mất kết nối" cho mọi máy
+          scheduleAuto(pid); // máy đánh thay để ván tiếp tục
+        } else if (G) {
+          publishRound([]);
+        }
+        checkStart();
+      }
+    }
+  }
+
+  function hostWireConnection(c) {
+    // Watchdog phía host: kết nối tới nhưng 15 giây không mở / không hello — dọn kết nối treo
+    c._pendingTimer = setTimeout(function () {
+      c._pendingTimer = null;
+      if (c._gone || c._role || c._helloSeen) return;
+      c._gone = true;
+      try { c.close(); } catch (e) { /* bỏ qua */ }
+      if (!G) {
+        setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông.', 'Nếu họ vẫn không vào được, hãy bảo họ kiểm tra lại mạng rồi thử vào lại.');
+      }
+    }, 15000);
+    c.on('data', function (data) { hostHandleData(c, data); });
+    c.on('close', function () { hostOnConnClose(c); });
+    c.on('error', function () { hostOnConnClose(c); });
+  }
+
+  function registerHost() {
+    peer = new Peer('duogames-' + roomCode);
+    peer.on('open', function () {
+      setStatus('Đang chờ người chơi vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên. Vào sảnh chờ và cùng bấm Sẵn sàng để bắt đầu.');
+    });
+    peer.on('connection', function (c) { hostWireConnection(c); });
+    peer.on('error', function (err) {
+      if (err && err.type === 'unavailable-id') {
+        setStatus('Mã phòng này đang được dùng.', 'Hãy tạo phòng khác với mã mới.');
+      } else {
+        setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+      }
+    });
+  }
+
+  // ================= Mạng phía khách / khán giả =================
+  function guestRetryLimit() { return everInGame ? 40 : 6; }
+
+  function guestConnectFailed() {
+    if (everInGame) {
+      setStatus('Không kết nối lại được với chủ phòng.', 'Ván đấu có thể vẫn đang chờ bạn — hãy thử tải lại trang để vào lại phòng.');
+    } else {
+      setStatus('Không kết nối được tới chủ phòng.', 'Có thể do mạng không ổn định, máy chủ trung chuyển tạm thời không truy cập được, hoặc chủ phòng đã đóng phòng. Hãy thử đổi mạng hoặc nhờ chủ phòng tạo phòng mới.');
+    }
+  }
+
+  function scheduleGuestRetry(subMsg) {
+    if (wantReconnect) { scheduleReconnect(); return; }
+    if (guestRetryTimer) return;
+    if (guestConnRetry >= guestRetryLimit()) { guestConnectFailed(); return; }
+    guestConnRetry++;
+    setStatus('Đang thử kết nối lại… (lần ' + guestConnRetry + ')', subMsg || 'Đang thử kết nối lại với chủ phòng…');
+    guestRetryTimer = setTimeout(function () {
+      guestRetryTimer = null;
+      connectToHost();
+    }, 3000);
+  }
+
+  function scheduleReconnect() {
+    if (specRetry >= 10) {
+      wantReconnect = false;
+      setStatus('Mất kết nối với chủ phòng.', 'Đã thử kết nối lại nhiều lần không được. Hãy tải lại trang để xem tiếp.');
+      return;
+    }
+    specRetry++;
+    setStatus('Đang kết nối lại…', 'Mất kết nối với chủ phòng, đang thử kết nối lại…');
+    setTimeout(connectToHost, 3000);
+  }
+
+  function guestOnHostGone() {
+    connected = false;
+    if (isSpectator) {
+      wantReconnect = true;
+      scheduleReconnect();
+      return;
+    }
+    if (view && view.phase !== 'over') {
+      everInGame = true;
+      setStatus('Mất kết nối với chủ phòng — đang tìm cách vào lại…', 'Đừng đóng trang này; khi kết nối lại được, bạn sẽ lấy lại ghế của mình.');
+      scheduleGuestRetry('Mất kết nối giữa ván — đang thử vào lại phòng…');
+    } else if (view && view.phase === 'over') {
+      setStatus('Chủ phòng đã rời phòng.', 'Ván đấu đã kết thúc.');
+    } else {
+      setStatus('Mất kết nối với chủ phòng.', 'Hãy tải lại trang hoặc nhờ chủ phòng tạo phòng mới.');
+      scheduleGuestRetry('Mất kết nối — đang thử lại…');
+    }
+    renderAll();
+  }
+
+  function wireGuestConnection(c, att) {
+    var opened = false;
+    var goneHandled = false;
+    var watchdog = setTimeout(function () { onAttemptFail(); }, 12000);
+
+    function clearWatchdog() {
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    }
+    function onAttemptFail() {
+      if (opened || att !== connectAttempt) return;
+      clearWatchdog();
+      connectAttempt++;
+      if (conn === c) conn = null;
+      try { c.close(); } catch (e) { /* bỏ qua */ }
+      scheduleGuestRetry('Kết nối tới chủ phòng chưa thông — đang thử lại…');
+    }
+    function onGone() {
+      if (goneHandled || att !== connectAttempt) return;
+      goneHandled = true;
+      clearWatchdog();
+      guestOnHostGone();
+    }
+
+    c.on('open', function () {
+      if (att !== connectAttempt) return;
+      opened = true;
+      clearWatchdog();
+      conn = c;
+      try { c.send({ type: 'hello', name: myName }); } catch (e) { /* bỏ qua */ }
+    });
+    c.on('data', function (data) {
+      if (att !== connectAttempt) return;
+      handleData(data);
+    });
+    c.on('close', function () {
+      if (att !== connectAttempt) return;
+      if (!opened) { onAttemptFail(); return; }
+      onGone();
+    });
+    c.on('error', function () {
+      if (att !== connectAttempt) return;
+      if (!opened) { onAttemptFail(); return; }
+      onGone();
+    });
+    try {
+      var pc = c.peerConnection;
+      if (pc && typeof pc.addEventListener === 'function') {
+        pc.addEventListener('iceconnectionstatechange', function () {
+          if (pc.iceConnectionState !== 'failed') return;
+          if (!opened) onAttemptFail(); else onGone();
+        });
+      }
+    } catch (e) { /* bỏ qua: watchdog 12 giây vẫn canh */ }
+  }
+
+  function connectToHost() {
+    if (!peer || peer.destroyed) return;
+    connectAttempt++;
+    var c = peer.connect('duogames-' + roomCode, { reliable: true });
+    wireGuestConnection(c, connectAttempt);
+  }
+
+  function applyLobby(p) {
+    if (!p) return;
+    lobbyPlayers = p.players || [];
+  }
+
+  function handleData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'welcome') {
+      wantReconnect = false;
+      specRetry = 0;
+      guestConnRetry = 0;
+      if (guestRetryTimer) { clearTimeout(guestRetryTimer); guestRetryTimer = null; }
+      connected = true;
+      if (data.as === 'spectator') {
+        isSpectator = true;
+        myPid = null;
+        setStatus('👁 Bạn đang xem ván này', 'Đang chờ đồng bộ ván đấu…');
+      } else {
+        isSpectator = false;
+        myPid = data.seat;
+        if (data.lobby) applyLobby(data.lobby);
+        if (myName) sendTo(conn, { type: 'name', name: myName });
+        if (!view) setStatus('Đã vào phòng!', 'Vào sảnh chờ và bấm Sẵn sàng cùng mọi người để bắt đầu.');
+      }
+      renderAll();
+    } else if (data.type === 'lobby') {
+      applyLobby(data);
+      renderAll();
+    } else if (data.type === 'lobby-phase') {
+      // Host đưa mọi người về sảnh chờ (sau khi ván kết thúc hoặc bị hủy)
+      view = null;
+      myCards = null;
+      btnRematch.classList.add('hidden');
+      renderAll();
+      if (data.voided) {
+        setStatus('🏦 Nhà cái mất kết nối — ván hủy, hoàn xu!', 'Toàn bộ cược đã được hoàn. Mọi người bấm Sẵn sàng để bắt đầu ván mới.');
+      } else {
+        setStatus('Đã về sảnh chờ.', 'Mọi người bấm Sẵn sàng để bắt đầu ván mới — nhà cái sẽ luân phiên.');
+      }
+    } else if (data.type === 'sync') {
+      if (data.lobby) applyLobby(data.lobby);
+      if (data.view) {
+        view = data.view;
+        everInGame = true;
+      }
+      renderAll();
+    } else if (data.type === 'round') {
+      view = data.view;
+      everInGame = true;
+      renderAll(data.events || []);
+    } else if (data.type === 'yourhand') {
+      // Bài riêng của mình — chỉ chấp nhận khi khớp token ván hiện tại
+      if (!view || data.token === view.token) {
+        myCards = data.cards;
+        renderAll();
+      }
+    } else if (data.type === 'note') {
+      setStatus('⚠️ ' + (data.msg || ''), '');
+    }
+  }
+
+  function startOnline() {
+    roomInfoEl.classList.remove('hidden');
+    roomCodeText.textContent = roomCode;
+    if (typeof Peer === 'undefined' || (window.Relay && !Relay.configured)) {
+      setStatus('Chưa cấu hình máy chủ trung chuyển (Firebase).', 'Trang chưa thể chơi online — cần điền cấu hình Firebase vào relay.js trước.');
+      return;
+    }
+    if (isHost) {
+      seats[0] = { conn: null, name: myName, connected: true, ready: false, xu: START_XU };
+      myPid = 0;
+      nextDealerPid = 0;
+      lobbyPlayers = lobbyPayload().players;
+      shareText.textContent = 'Gửi link mời này cho bạn bè để họ vào phòng:';
+      setStatus('Đang chờ người chơi vào phòng…', 'Chia sẻ mã phòng hoặc link mời bên trên để bạn bè vào phòng.');
+      registerHost();
+      renderAll();
+    } else {
+      shareText.textContent = 'Bạn đang vào phòng với tư cách khách.';
+      btnCopy.classList.add('hidden');
+      setStatus('Đang kết nối tới phòng…', 'Vui lòng chờ chủ phòng sẵn sàng.');
+      peer = new Peer();
+      peer.on('open', function () { connectToHost(); });
+      peer.on('error', function (err) {
+        if (err && err.type === 'peer-unavailable') {
+          if (everInGame || wantReconnect) {
+            scheduleGuestRetry('Chủ phòng chưa trực tuyến — đang thử lại…');
+          } else {
+            setStatus('Không tìm thấy phòng ' + roomCode + '.', 'Có thể chủ phòng chưa tạo phòng hoặc mã phòng chưa đúng. Hãy tải lại trang và thử lại.');
+          }
+        } else {
+          setStatus('Lỗi kết nối: ' + (err && err.type ? err.type : 'không rõ') + '.', 'Hãy tải lại trang và thử lại.');
+        }
+      });
+    }
+  }
+
+  function shareLink() {
+    var url = new URL(location.href);
+    url.searchParams.set('room', roomCode);
+    url.searchParams.delete('host');
+    url.searchParams.delete('local');
+    return url.toString();
+  }
+
+  // ================= Chế độ cùng máy (local) =================
+  function syncLocalLobby(dealerPid) {
+    lobbyPlayers = [];
+    for (var i = 0; i < localPlayerCount; i++) {
+      lobbyPlayers.push({
+        pid: i,
+        name: localNames[i] || ('Người chơi ' + (i + 1)),
+        xu: localXu[i] || 0,
+        ready: true,
+        connected: true,
+        isDealer: i === dealerPid
+      });
+    }
+  }
+
+  function localPids() {
+    var r = [];
+    for (var i = 0; i < localPlayerCount; i++) r.push(i);
+    return r;
+  }
+
+  function startLocalGame() {
+    localNames = [];
+    localXu = [];
+    for (var i = 0; i < localPlayerCount; i++) {
+      localNames.push('Người chơi ' + (i + 1));
+      localXu.push(START_XU);
+    }
+    nextDealerPid = 0;
+    roundsStarted = 0;
+    localSetupEl.classList.add('hidden');
+    syncLocalLobby(0);
+    startRound(localPids());
+  }
+
+  // "Ván tiếp" ở chế độ cùng máy: sang ván mới ngay, nhà cái luân phiên
+  function localNextRound() {
+    var curDealer = G ? G.dealerPid : nextDealerPid;
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    G = null;
+    view = null;
+    coverPid = null;
+    coverDismissed = false;
+    nextDealerPid = computeNextDealer(curDealer);
+    btnRematch.classList.add('hidden');
+    startRound(localPids());
+  }
+
+  // ================= Thao tác từ UI =================
+  function requestAction(kind) {
+    if (!view || view.phase === 'over') return;
+    if (isLocal) {
+      if (!G) return;
+      if (coverPid !== null && !coverDismissed) return; // đang bị màn che — chưa xem bài thì chưa đánh được
+      var tp = G.turnPid;
+      if (tp === null) return;
+      var okL = doAction(tp, kind);
+      if (!okL && kind === 'stand') setStatus('⚠️ Chưa đủ tuổi (dưới 16 điểm) — bắt buộc rút thêm!', '');
+      return;
+    }
+    if (isAuthority) {
+      var mine = (view.phase === 'con' && view.turnPid === myPid) || (view.phase === 'dealer' && view.dealerPid === myPid);
+      if (!mine) return;
+      var okA = doAction(myPid, kind);
+      if (!okA && kind === 'stand') setStatus('⚠️ Chưa đủ tuổi (dưới 16 điểm) — bắt buộc rút thêm!', '');
+      return;
+    }
+    if (isSpectator || myPid === null || !connected) return;
+    var mineG = (view.phase === 'con' && view.turnPid === myPid) || (view.phase === 'dealer' && view.dealerPid === myPid);
+    if (mineG) sendTo(conn, { type: kind });
+  }
+
+  btnHit.addEventListener('click', function () { requestAction('hit'); });
+  btnStand.addEventListener('click', function () { requestAction('stand'); });
+  btnCoverOk.addEventListener('click', function () {
+    coverDismissed = true;
+    renderAll();
+  });
+
+  btnLobbyReady.addEventListener('click', function () {
+    if (isSpectator || myPid === null) return;
+    var mine = null;
+    lobbyPlayers.forEach(function (p) { if (p.pid === myPid) mine = p; });
+    var next = !(mine && mine.ready);
+    if (isAuthority && online) {
+      if (seats[myPid]) {
+        seats[myPid].ready = next;
+        broadcastLobby();
+        checkStart();
+      }
+    } else if (online && connected) {
+      sendTo(conn, { type: 'ready', ready: next });
+    }
+  });
+
+  btnRematch.addEventListener('click', function () {
+    if (isLocal) {
+      if (G && G.phase === 'over') localNextRound();
+      return;
+    }
+    if (isSpectator) return;
+    if (isAuthority && online) {
+      if (G && G.phase === 'over') backToLobby();
+    } else if (online && connected) {
+      sendTo(conn, { type: 'rematch' });
+    }
+  });
+
+  // Sao chép link mời (URL khách: có mã phòng, KHÔNG có tham số host) + phản hồi ngắn trên nút
+  function copyInviteLink(btn, label) {
+    var link = shareLink();
+    function done() {
+      btn.textContent = 'Đã sao chép ✓';
+      setTimeout(function () { btn.textContent = label; }, 2000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(done, function () { window.prompt('Sao chép link mời:', link); });
+    } else {
+      window.prompt('Sao chép link mời:', link);
+    }
+  }
+  btnCopy.addEventListener('click', function () { copyInviteLink(btnCopy, 'Sao chép link mời'); });
+  if (btnLobbyCopy) btnLobbyCopy.addEventListener('click', function () { copyInviteLink(btnLobbyCopy, '📋 Sao chép link mời'); });
+
+  btnChangeName.addEventListener('click', function () { openNameModal(); });
+  btnNameDice.addEventListener('click', function () {
+    nameGenerated = genRandomName();
+    nameInput.value = nameGenerated;
+  });
+  btnNameSave.addEventListener('click', function () { saveNameFromModal(); });
+
+  var btnCreate = el('btnCreate');
+  if (btnCreate) {
+    btnCreate.addEventListener('click', function () {
+      var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      var code = 'X';
+      for (var i = 0; i < 5; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+      location.href = 'xidach.html?room=' + code + '&host=1';
+    });
+  }
+  var btnJoin = el('btnJoin');
+  if (btnJoin) {
+    btnJoin.addEventListener('click', function () {
+      var code = el('joinCode').value.trim().toUpperCase();
+      if (code) location.href = 'xidach.html?room=' + encodeURIComponent(code);
+    });
+  }
+
+  ['btnP2', 'btnP3', 'btnP4', 'btnP5', 'btnP6'].forEach(function (id, idx) {
+    var b = el(id);
+    if (b) b.addEventListener('click', function () {
+      localPlayerCount = idx + 2;
+      ['btnP2', 'btnP3', 'btnP4', 'btnP5', 'btnP6'].forEach(function (id2, j) {
+        el(id2).classList.toggle('toggled', j === idx);
+      });
+    });
+  });
+  var btnLocalStart = el('btnLocalStart');
+  if (btnLocalStart) btnLocalStart.addEventListener('click', function () { startLocalGame(); });
+
+  // ================= Khởi tạo =================
+  myName = loadProfile();
+  renderAll();
+
+  if (isLocal) {
+    localPlayerCount = 3;
+    localSetupEl.classList.remove('hidden');
+    el('btnP3').classList.add('toggled');
+    setStatus('Chọn số người chơi rồi bấm Bắt đầu.', 'Chế độ cùng máy: 2–6 người thay phiên nhau, có màn che chuyền máy.');
+  } else if (online) {
+    startOnline();
+  } else {
+    setupEl.classList.remove('hidden');
+    setStatus('Chọn cách chơi bên trên để bắt đầu.', '');
+  }
+
+  if (!myName) openNameModal();
+
+  // Phơi bày cho harness kiểm thử (không ảnh hưởng gameplay)
+  window.XIDACH_DEBUG = {
+    evalHand: evalHand, handValue: handValue, compareHands: compareHands,
+    makeDeck: makeDeck, cardText: cardText, isSpecial: isSpecial,
+    setNextDeck: function (cards) { deckOverride = cards; },
+    doAction: doAction, startRound: startRound, backToLobby: backToLobby,
+    getG: function () { return G; },
+    getView: function () { return view; },
+    getSeats: function () { return seats; },
+    getLobby: function () { return lobbyPlayers; },
+    getMyPid: function () { return myPid; },
+    getMyCards: function () { return currentMyCards(); },
+    getRawMyCards: function () { return myCards; },
+    isSpectator: function () { return isSpectator; },
+    getNextDealer: function () { return nextDealerPid; },
+    getLocalXu: function () { return localXu; },
+    BET: BET, START_XU: START_XU, MAX_SEATS: MAX_SEATS
+  };
+})();
+</script>
+</body>
+</html>

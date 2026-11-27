@@ -846,8 +846,10 @@
 
   function hostOnConnClose(c) {
     if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
-    if (c._closed) return;
-    c._closed = true;
+    // LƯU Ý: không dùng c._closed làm cờ riêng — RelayConn của relay.js tự đặt
+    // _closed=true TRƯỚC khi bắn sự kiện 'close', sẽ làm hàm này thoát sớm luôn.
+    if (c._gone) return;
+    c._gone = true;
     if (c._role === 'spectator') {
       spectators = spectators.filter(function (s) { return s !== c; });
       return;
@@ -1062,8 +1064,8 @@
     // chơi, và gợi ý cho chủ phòng nếu vẫn đang chờ người vào.
     c._pendingTimer = setTimeout(function () {
       c._pendingTimer = null;
-      if (c._closed || c._role || c._helloSeen) return;
-      c._closed = true;
+      if (c._gone || c._role || c._helloSeen) return;
+      c._gone = true;
       try { c.close(); } catch (e) { /* bỏ qua */ }
       var waitingForPlayer = !playerConn || playerGone || !playerConn.open;
       if (waitingForPlayer) {

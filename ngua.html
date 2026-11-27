@@ -1327,8 +1327,10 @@
 
   function hostOnConnClose(c) {
     if (c._pendingTimer) { clearTimeout(c._pendingTimer); c._pendingTimer = null; }
-    if (c._closed) return;
-    c._closed = true;
+    // LƯU Ý: không dùng c._closed làm cờ riêng — RelayConn của relay.js tự đặt
+    // _closed=true TRƯỚC khi bắn sự kiện 'close', sẽ làm hàm này thoát sớm luôn.
+    if (c._gone) return;
+    c._gone = true;
     if (c._role === 'spectator') {
       spectatorConns = spectatorConns.filter(function (x) { return x !== c; });
       return;
@@ -1355,8 +1357,8 @@
     // nhiều khả năng phía khách bị chặn WebRTC. Dọn kết nối treo và gợi ý.
     c._pendingTimer = setTimeout(function () {
       c._pendingTimer = null;
-      if (c._closed || c._role || c._helloSeen) return;
-      c._closed = true;
+      if (c._gone || c._role || c._helloSeen) return;
+      c._gone = true;
       try { c.close(); } catch (e) { /* bỏ qua */ }
       if (!G) {
         setStatus('Có người đang cố vào phòng nhưng kết nối chưa thông.', 'Nếu họ vẫn không vào được, hãy bảo họ kiểm tra lại mạng rồi thử vào lại.');
