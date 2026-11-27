@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ Caro — DuoGames</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="relay.js"></script>
@@ -39,15 +40,20 @@
   .timeout-text { color: #facc15; font-weight: 600; margin: 10px 0 0; }
   .ready-lines { margin: 16px 0 18px; font-size: 1.05rem; display: grid; gap: 6px; }
   #btnReady { font-size: 1.05rem; padding: 11px 22px; }
+  #endTitle { margin: 0 0 8px; }
+  #endReason { margin: 0 0 6px; }
+  #endScore { margin: 0 0 14px; font-weight: 600; color: #facc15; }
   input[type="text"] { padding: 9px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; text-transform: uppercase; }
   #nameInput { text-transform: none; }
   .hidden { display: none; }
   a { color: #38bdf8; }
+
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>🔲 Cờ Caro</h1>
+  <h1><img class="title-logo" src="logo.svg" alt="gemgem">🔲 Cờ Caro</h1>
   <p class="sub">Luật Việt Nam: đúng 5 quân liên tiếp mới thắng, bị chặn 2 đầu hoặc quá 5 quân (dài hơn 5) thì không thắng.</p>
 
   <!-- Màn hình thiết lập khi mở trực tiếp không có tham số -->
@@ -107,6 +113,19 @@
         <div id="oppReadyLine">Đối thủ: Chưa sẵn sàng</div>
       </div>
       <button id="btnReady" type="button">✅ Sẵn sàng</button>
+    </div>
+  </div>
+
+  <!-- Popup thông báo kết thúc ván -->
+  <div id="endOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="endTitle">🏆 Thắng!</h2>
+      <p id="endReason"></p>
+      <p id="endScore"></p>
+      <div class="toolbar" style="justify-content:center;">
+        <button id="btnEndRematch" type="button">Ván mới</button>
+        <button id="btnEndClose" type="button" class="secondary">Đóng</button>
+      </div>
     </div>
   </div>
 
@@ -480,6 +499,7 @@
         setStatus(dispOpp() + ' thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
       }
       countScore(mark);
+      syncEndPopup();
       saveGame();
       return;
     }
@@ -489,6 +509,7 @@
       if (isSpectator) spectatorPhase = 'over';
       setStatus('Hòa! Bàn cờ đã đầy.', 'Bấm "Ván mới" để chơi lại.');
       countScore('draw');
+      syncEndPopup();
       saveGame();
       return;
     }
@@ -517,6 +538,7 @@
   }
 
   function resetGame() {
+    hideEndPopup();
     emptyBoard();
     current = 'X';
     gameOver = false;
@@ -618,6 +640,51 @@
     else score.guest++;
     updateScoreUI();
   }
+
+  /* ---------- Popup kết thúc ván ----------
+     Hiện đúng một lần cho mỗi ván kết thúc (nhận diện bằng token ván):
+     đồng bộ lại trạng thái 'over' không hiện lại; bấm Đóng thì không tự
+     bật lại; ván mới bắt đầu thì tự đóng. */
+  var endOverlay = document.getElementById('endOverlay');
+  var endTitleEl = document.getElementById('endTitle');
+  var endReasonEl = document.getElementById('endReason');
+  var endScoreEl = document.getElementById('endScore');
+  var btnEndRematch = document.getElementById('btnEndRematch');
+  var btnEndClose = document.getElementById('btnEndClose');
+  var endPopupKey = null, endPopupDismissed = false;
+  function hideEndPopup() {
+    endOverlay.classList.add('hidden');
+    endPopupKey = null;
+    endPopupDismissed = false;
+  }
+  function syncEndPopup() {
+    if (!gameOver) {
+      if (endPopupKey !== null || !endOverlay.classList.contains('hidden')) hideEndPopup();
+      return;
+    }
+    var key = (gameToken || 'local') + '|' + (winner || '') + '|' + moveCount;
+    if (key !== endPopupKey) { endPopupKey = key; endPopupDismissed = false; }
+    if (endPopupDismissed) return;
+    if (winner === 'draw') {
+      endTitleEl.textContent = '🤝 Hòa!';
+      endReasonEl.textContent = 'Bàn cờ đã đầy — không còn ô trống.';
+    } else if (winner) {
+      endTitleEl.textContent = '🏆 ' + (isLocal ? ('Quân ' + winner) : nameOfMarkOwner(winner)) + ' thắng!';
+      if (winCells) {
+        endReasonEl.textContent = 'Đủ 5 quân liên tiếp!';
+      } else {
+        var loser = winner === 'X' ? 'O' : 'X';
+        endReasonEl.textContent = (isLocal ? ('Quân ' + loser) : nameOfMarkOwner(loser)) + ' đã xin thua.';
+      }
+    }
+    var sc = scoreEl.textContent;
+    endScoreEl.textContent = sc;
+    endScoreEl.style.display = sc ? '' : 'none';
+    btnEndRematch.style.display = isSpectator ? 'none' : '';
+    endOverlay.classList.remove('hidden');
+  }
+  btnEndClose.addEventListener('click', function () { endPopupDismissed = true; endOverlay.classList.add('hidden'); });
+  btnEndRematch.addEventListener('click', function () { btnRestart.click(); });
 
   // Cập nhật quân của mình + nhãn "Bạn là quân…" + bảng tỉ số theo phân vai hiện tại
   function refreshIdentityUI() {
@@ -905,6 +972,7 @@
           setStatus('Đã khôi phục ván đấu — tiếp tục chơi', current === myMark ? 'Lượt của bạn (' + myMark + ')' : 'Chờ ' + dispOpp() + ' đi tiếp…');
         }
       }
+      syncEndPopup();
       saveGame();
     } else if (data.type === 'start') {
       if (data.names) {
@@ -968,6 +1036,7 @@
         setStatus('🎉 ' + dispOpp() + ' đã xin thua — bạn thắng!', 'Bấm "Ván mới" để chơi lại.');
         if (isHost) broadcastToSpectators({ type: 'resign', by: 'guest' }); // chuyển tiếp cho khán giả
       }
+      syncEndPopup();
       saveGame();
     } else if (data.type === 'name') {
       // Phía bên kia đổi tên: cập nhật ngay (chủ phòng chuyển tiếp cho khán giả)
@@ -1208,6 +1277,7 @@
     winner = myMark === 'X' ? 'O' : 'X';
     countScore(winner);
     setStatus('Bạn đã xin thua. ' + dispOpp() + ' thắng ván này.', 'Bấm "Ván mới" để chơi lại.');
+    syncEndPopup();
     saveGame();
   });
 

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phòng Game 2 Người — Cờ vua · Cờ tướng · Cờ caro</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <style>
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; line-height: 1.6; }
   main { max-width: 680px; margin: 0 auto; padding: 48px 20px 64px; }
@@ -31,11 +32,13 @@
   .dialog p { margin: 0 0 14px; color: #94a3b8; }
   .dialog input { width: 100%; box-sizing: border-box; letter-spacing: normal; text-transform: none; margin-bottom: 12px; }
   .dialog .row { justify-content: space-between; }
+
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>🎲 Phòng Game 2 Người</h1>
+  <h1><img class="title-logo" src="logo.svg" alt="gemgem">🎲 Phòng Game 2 Người</h1>
   <p class="lead">Tạo phòng, gửi <b>mã phòng</b> hoặc <b>link mời</b> cho bạn bè — vào là chơi cùng nhau, không cần đăng ký.</p>
   <p class="profile">👤 Tên của bạn: <b id="myNameLabel">(chưa đặt)</b> <button class="linkbtn" id="editNameBtn" type="button">Đổi tên</button></p>
 
@@ -97,7 +100,7 @@
     <div class="err" id="err"></div>
   </div>
 
-  <footer>Trang tĩnh trên GitHub Pages — kết nối 2 người chơi trực tiếp qua WebRTC (PeerJS). Một sản phẩm của <a href="https://github.com/minhpnb">minhpnb</a>.</footer>
+  <footer>Trang tĩnh trên GitHub Pages — kết nối qua Firebase Realtime Database. Một sản phẩm của <a href="https://github.com/minhpnb">minhpnb</a>.</footer>
 </main>
 <script>
   var ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

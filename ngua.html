@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ Cá Ngựa — DuoGames</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="relay.js"></script>
@@ -55,6 +56,8 @@
   .overlay.hidden { display: none; }
   .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 20px; max-width: 480px; width: 100%; text-align: center; }
   .modal h2 { margin: 0 0 8px; font-size: 1.3rem; }
+  #endReason { margin: 0 0 6px; }
+  #endScore { margin: 0 0 14px; font-weight: 600; color: #facc15; }
   table.lobby { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: .98rem; }
   table.lobby th, table.lobby td { border: 1px solid #334155; padding: 7px 8px; text-align: left; }
   table.lobby th { background: #0f172a; color: #94a3b8; font-weight: 600; }
@@ -63,11 +66,13 @@
   #nameInput { text-transform: none; }
   .hidden { display: none; }
   a { color: #38bdf8; }
+
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>🐎 Cờ Cá Ngựa</h1>
+  <h1><img class="title-logo" src="logo.svg" alt="gemgem">🐎 Cờ Cá Ngựa</h1>
   <p class="sub">2–4 người chơi. Màu ngựa được bốc thăm mỗi ván (2 người chơi luôn ngồi đối diện nhau). Đổ 6 để ra quân, đá ngựa đối thủ về chuồng — kể cả ở ô xuất phát; mỗi ô chỉ chứa 1 ngựa và không được nhảy qua ngựa đứng trước. Đưa cả 4 ngựa về đích trước để thắng.</p>
 
   <!-- Màn hình thiết lập khi mở trực tiếp không có tham số -->
@@ -148,6 +153,19 @@
       <button id="btnLobbyReady" type="button">✅ Sẵn sàng</button>
       <div style="margin-top:10px;">
         <button id="btnLobbyCopy" type="button" class="secondary">📋 Sao chép link mời</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Popup thông báo kết thúc ván -->
+  <div id="endOverlay" class="overlay hidden">
+    <div class="modal">
+      <h2 id="endTitle">🏆 Thắng!</h2>
+      <p id="endReason"></p>
+      <p id="endScore"></p>
+      <div class="toolbar" style="justify-content:center;">
+        <button id="btnEndRematch" type="button">🔁 Chơi tiếp</button>
+        <button id="btnEndClose" type="button" class="secondary">Đóng</button>
       </div>
     </div>
   </div>
@@ -933,7 +951,53 @@
     turnLineEl.textContent = G && G.phase === 'playing'
       ? 'Lượt: ' + seatDisplayName(G.turn) + ' (' + SEAT_NAMES[G.turn] + ')'
       : (G && G.phase === 'over' ? 'Đã kết thúc ván' : 'Chưa bắt đầu');
+    syncEndPopup();
   }
+
+  /* ---------- Popup kết thúc ván ----------
+     Hiện đúng một lần cho mỗi ván kết thúc (nhận diện bằng token ván):
+     đồng bộ lại trạng thái 'over' không hiện lại; bấm Đóng thì không tự
+     bật lại; ván mới bắt đầu / về sảnh thì tự đóng. */
+  var endOverlay = document.getElementById('endOverlay');
+  var endTitleEl = document.getElementById('endTitle');
+  var endReasonEl = document.getElementById('endReason');
+  var endScoreEl = document.getElementById('endScore');
+  var btnEndRematch = document.getElementById('btnEndRematch');
+  var btnEndClose = document.getElementById('btnEndClose');
+  var endPopupKey = null, endPopupDismissed = false;
+  function winnerWinsCount() {
+    if (!G || typeof G.winner !== 'number') return 0;
+    var pid = pidOfColor(G.winner);
+    if (pid < 0) pid = G.winner;
+    if (isLocal) return localWins[pid] || 0;
+    if (online && isHost && seats[pid]) return seats[pid].wins || 0;
+    for (var i = 0; i < lobbyPlayers.length; i++) {
+      if (lobbyPlayers[i].pid === pid) return lobbyPlayers[i].wins || 0;
+    }
+    return 0;
+  }
+  function hideEndPopup() {
+    endOverlay.classList.add('hidden');
+    endPopupKey = null;
+    endPopupDismissed = false;
+  }
+  function syncEndPopup() {
+    if (!G || G.phase !== 'over') {
+      if (endPopupKey !== null || !endOverlay.classList.contains('hidden')) hideEndPopup();
+      return;
+    }
+    var key = (G.token || 'local') + '|' + G.winner;
+    if (key !== endPopupKey) { endPopupKey = key; endPopupDismissed = false; }
+    if (endPopupDismissed) return;
+    var wName = seatDisplayName(G.winner);
+    endTitleEl.textContent = '🏆 ' + wName + ' thắng!';
+    endReasonEl.textContent = wName + ' (' + SEAT_NAMES[G.winner] + ') đã đưa cả 4 ngựa về đích!';
+    endScoreEl.textContent = 'Tổng số ván thắng của ' + wName + ': ' + winnerWinsCount();
+    btnEndRematch.style.display = isSpectator ? 'none' : '';
+    endOverlay.classList.remove('hidden');
+  }
+  btnEndClose.addEventListener('click', function () { endPopupDismissed = true; endOverlay.classList.add('hidden'); });
+  btnEndRematch.addEventListener('click', function () { btnRematch.click(); });
 
   function onHorseClick(seat, horse) {
     if (animLock) return; // đang chiếu animation di chuyển: khóa thao tác

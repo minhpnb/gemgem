@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="gemgem">
+  <!-- gemgem logo: faceted gem (crown + pavilion), blue/violet tones, sparkle -->
+  <g stroke="#1e3a8a" stroke-opacity="0.35" stroke-width="1.5" stroke-linejoin="round">
+    <!-- crown facets -->
+    <polygon points="20,10 32,10 28,26 12,26" fill="#7dd3fc"/>
+    <polygon points="32,10 44,10 36,26 28,26" fill="#38bdf8"/>
+    <polygon points="44,10 58,26 36,26" fill="#818cf8"/>
+    <polygon points="20,10 12,26 6,26" fill="#a5b4fc"/>
+    <!-- pavilion facets -->
+    <polygon points="6,26 21,26 32,56" fill="#7c3aed"/>
+    <polygon points="21,26 43,26 32,56" fill="#6366f1"/>
+    <polygon points="43,26 58,26 32,56" fill="#a855f7"/>
+  </g>
+  <!-- facet highlights -->
+  <polyline points="12,26 58,26" fill="none" stroke="#e0f2fe" stroke-opacity="0.5" stroke-width="1"/>
+  <!-- sparkle -->
+  <path d="M50 2 L52 8 L58 10 L52 12 L50 18 L48 12 L42 10 L48 8 Z" fill="#f0abfc"/>
+</svg>

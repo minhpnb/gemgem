@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ tướng — DuoGames</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="relay.js"></script>
@@ -48,12 +49,19 @@
   #readyBtn { margin-top: 14px; font-size: 1.05rem; padding: 11px 22px; }
   /* Name prompt */
   #nameOverlay { position: fixed; inset: 0; background: rgba(2,6,23,.75); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
+  /* Popup kết thúc ván */
+  #endOverlay { position: fixed; inset: 0; background: rgba(2,6,23,.75); display: none; align-items: center; justify-content: center; z-index: 55; padding: 16px; }
+  #endTitle { margin: 0 0 6px; font-size: 1.3rem; }
+  #endReason { margin: 0 0 6px; color: #cbd5e1; }
+  #endScore { margin: 0 0 14px; font-weight: 600; color: #facc15; }
   #nameInput { width: 100%; padding: 10px 12px; margin-top: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1.05rem; text-align: center; font-family: inherit; }
+
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>♟️ Cờ tướng</h1>
+  <h1><img class="title-logo" src="logo.svg" alt="gemgem">♟️ Cờ tướng</h1>
   <p class="sub" id="modeLine">Đang tải…</p>
 
   <div class="panel">
@@ -106,6 +114,18 @@
       <div class="readyLine" id="myReadyLine">Bạn: Chưa sẵn sàng</div>
       <div class="readyLine" id="oppReadyLine">Đối thủ: Chưa sẵn sàng</div>
       <button id="readyBtn">✅ Sẵn sàng</button>
+    </div>
+  </div>
+
+  <div id="endOverlay">
+    <div class="readyCard">
+      <h2 id="endTitle">🏆 Thắng!</h2>
+      <p id="endReason"></p>
+      <p id="endScore"></p>
+      <div class="btns" style="justify-content:center">
+        <button id="endRematchBtn" type="button">Ván mới</button>
+        <button id="endCloseBtn" type="button" class="secondary">Đóng</button>
+      </div>
     </div>
   </div>
 
@@ -286,6 +306,7 @@ var statusEl=document.getElementById('status'),
 function resetGame(){
   board=initialBoard(); turn='r'; selected=null; selMoves=[]; lastMove=null; gameOver=false; overInfo=null;
   scoreCounted=false;
+  hideEndPopup();
   started = localMode ? true : connected;
   render(); updateStatus();
   saveGame();
@@ -318,7 +339,49 @@ function endGame(winnerColor, reason){
   recordResult(winnerColor);
   render();
   saveGame();
+  syncEndPopup();
 }
+/* ============ Popup kết thúc ván ============
+   Hiện đúng một lần cho mỗi ván kết thúc (nhận diện bằng token ván):
+   đồng bộ lại trạng thái 'over' không hiện lại; bấm Đóng thì không tự
+   bật lại; ván mới bắt đầu thì tự đóng. */
+var endOverlay=document.getElementById('endOverlay'),
+    endTitleEl=document.getElementById('endTitle'),
+    endReasonEl=document.getElementById('endReason'),
+    endScoreEl=document.getElementById('endScore'),
+    endRematchBtn=document.getElementById('endRematchBtn'),
+    endCloseBtn=document.getElementById('endCloseBtn');
+var endPopupKey=null, endPopupDismissed=false;
+function endWinnerName(color){
+  if(localMode) return color==='r' ? 'Quân Đỏ' : 'Quân Đen';
+  var winnerIsHost = (color==='r')===hostRed;
+  if(isSpectator) return winnerIsHost ? (specHostName||'Chủ phòng') : (specGuestName||'Khách');
+  return winnerIsHost===isHost ? dispMy() : dispOpp();
+}
+function hideEndPopup(){ endOverlay.style.display='none'; endPopupKey=null; endPopupDismissed=false; }
+function syncEndPopup(){
+  if(!gameOver){ if(endPopupKey!==null || endOverlay.style.display!=='none') hideEndPopup(); return; }
+  var key=(gameToken||'local')+'|'+(overInfo?overInfo.winner:'')+'|'+(overInfo?overInfo.reason:'');
+  if(key!==endPopupKey){ endPopupKey=key; endPopupDismissed=false; }
+  if(endPopupDismissed) return;
+  if(overInfo && overInfo.winner){
+    endTitleEl.textContent='🏆 ' + endWinnerName(overInfo.winner) + ' thắng!';
+    endReasonEl.textContent=overInfo.reason ? ('Lý do: ' + overInfo.reason.charAt(0).toUpperCase() + overInfo.reason.slice(1) + '.') : '';
+  } else if(overInfo){
+    endTitleEl.textContent='🤝 Hòa!';
+    endReasonEl.textContent=overInfo.reason ? ('Lý do: ' + overInfo.reason.charAt(0).toUpperCase() + overInfo.reason.slice(1) + '.') : '';
+  } else {
+    endTitleEl.textContent='🏆 Ván đấu kết thúc!';
+    endReasonEl.textContent='Một người chơi đã xin thua.';
+  }
+  var sc=scoreLineEl.textContent;
+  endScoreEl.textContent=sc;
+  endScoreEl.style.display=sc?'':'none';
+  endRematchBtn.style.display=isSpectator?'none':'';
+  endOverlay.style.display='flex';
+}
+endCloseBtn.addEventListener('click', function(){ endPopupDismissed=true; endOverlay.style.display='none'; });
+endRematchBtn.addEventListener('click', function(){ document.getElementById('restartBtn').click(); });
 function afterMove(){
   render();
   if(allLegalMoves(board, turn).length===0){
@@ -500,7 +563,7 @@ resignBtn.addEventListener('click', function(){
   if(localMode || isSpectator || gameOver || !connected) return;
   if(!confirm('Bạn chắc chắn muốn xin thua ván này?')) return;
   try{ conn.send({type:'resign'}); }catch(e){}
-  if(isHost) sendToSpecs({type:'resign'});
+  if(isHost) sendToSpecs({type:'resign', winner:(myColor==='r'?'b':'r')});
   endGame(myColor==='r'?'b':'r', dispMy() + ' xin thua');
 });
 copyBtn.addEventListener('click', function(){
@@ -570,18 +633,22 @@ function updateScoreUI(){
     scoreLineEl.textContent='Tỉ số — '+dispMy()+' '+mine+' : '+theirs+' '+dispOpp()+drawTxt;
   }
 }
-function applyAssignment(){
+function applyAssignment(decided){
   if(localMode || isSpectator) return;
+  if(decided===undefined) decided=started;
   myColor = isHost ? (hostRed?'r':'b') : (hostRed?'b':'r');
   flipped = (myColor==='b');
-  modeLine.textContent = 'Chế độ online — ' + dispMy() + ' là ' + (isHost?'chủ phòng':'khách') + ', cầm quân ' + (myColor==='r'?'Đỏ (đi trước)':'Đen (đi sau)');
+  modeLine.textContent = decided
+    ? 'Chế độ online — ' + dispMy() + ' là ' + (isHost?'chủ phòng':'khách') + ', cầm quân ' + (myColor==='r'?'Đỏ (đi trước)':'Đen (đi sau)')
+    : 'Chế độ online — ' + dispMy() + ' là ' + (isHost?'chủ phòng':'khách') + ' — quân đi trước được bốc thăm ở ván đầu, luân phiên ở các ván sau';
   render();
 }
 function applyStart(hr, token, sc){
+  hideEndPopup();
   hostRed=!!hr;
   gameToken=token||null;
   if(sc) score={ host:+sc.host||0, guest:+sc.guest||0, draws:+sc.draws||0 };
-  applyAssignment();
+  applyAssignment(true); /* ván đã bắt đầu: phân vai sau bốc thăm là chắc chắn */
   updateScoreUI();
   hideReadyPopup();
   phase='playing'; started=true;
@@ -647,11 +714,12 @@ function applyGameState(g){
   if(g.score) score={ host:+g.score.host||0, guest:+g.score.guest||0, draws:+g.score.draws||0 };
   if(typeof g.matchGames==='number') matchGames=g.matchGames;
   selected=null; selMoves=[];
-  applyAssignment();
+  applyAssignment(true); /* trạng thái đã lưu: phân vai là chắc chắn */
   updateScoreUI();
   render();
   if(gameOver && overInfo) setStatus(isSpectator ? '👁 Ván đấu đã kết thúc — ' + resultText() : resultText());
   else updateStatus();
+  syncEndPopup();
 }
 function currentPhase(){ return gameOver ? 'over' : (phase==='playing' ? 'playing' : 'ready'); }
 function saveGame(){
@@ -769,12 +837,14 @@ function onData(data){
   } else if(data.type==='resign'){
     if(isSpectator){
       gameOver=true; phase='over'; selected=null; selMoves=[];
+      if(data.winner) overInfo={ winner:data.winner, reason:'xin thua' };
       setStatus('👁 Ván đấu đã kết thúc — có người chơi đã xin thua.');
       render();
+      syncEndPopup();
       return;
     }
     endGame(myColor, dispOpp() + ' xin thua');
-    if(isHost) sendToSpecs({type:'resign'});
+    if(isHost) sendToSpecs({type:'resign', winner: myColor});
   }
 }
 
@@ -965,7 +1035,7 @@ function initOnline(){
   if(!restoredSave) flipped = !isHost; /* nếu đã khôi phục ván: giữ hướng bàn theo phân vai đã lưu */
   modeLine.textContent = 'Chế độ online — ' + dispMy() + ' là ' + (isHost ? 'chủ phòng' : 'khách');
   updateScoreUI();
-  if(restoredSave) applyAssignment(); /* khôi phục: hiện lại quân của mình theo phân vai đã lưu */
+  if(restoredSave) applyAssignment(true); /* khôi phục: hiện lại quân của mình theo phân vai đã lưu */
   roomInfoEl.innerHTML = 'Mã phòng: <b>'+escapeHtml(roomCode)+'</b>';
   resignBtn.style.display='';
   if(typeof Peer==='undefined' || (window.Relay && !Relay.configured)){ setStatus('⚠️ Chưa cấu hình máy chủ trung chuyển (Firebase) — trang chưa thể chơi online. Cần điền cấu hình Firebase vào relay.js trước.'); return; }
@@ -1013,6 +1083,17 @@ if(localMode){
   }
 }
 if(!myName) showNamePrompt(); /* lần đầu truy cập: hỏi tên (game/mạng vẫn chạy bình thường) */
+/* Phơi bày cho harness kiểm thử (không ảnh hưởng gameplay) */
+window.XIANGQI_DEBUG = {
+  getBoard: function(){ return board; },
+  setBoard: function(b){ board=b; },
+  setTurn: function(t){ turn=t; },
+  render: render,
+  select: function(x, y){ selected=[x,y]; selMoves=legalMoves(board,x,y); },
+  tryMove: tryMove,
+  getGameOver: function(){ return gameOver; },
+  getOverInfo: function(){ return overInfo; }
+};
 })();
 </script>
 </body>

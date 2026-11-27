@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cờ vua — DuoGames</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="relay.js"></script>
@@ -56,6 +57,12 @@
   .promoBtns button:hover { border-color: #38bdf8; }
   #readyOverlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .75); display: none; align-items: center; justify-content: center; z-index: 60; }
   #readyOverlay.open { display: flex; }
+  #endOverlay { position: fixed; inset: 0; background: rgba(2, 6, 23, .75); display: none; align-items: center; justify-content: center; z-index: 70; }
+  #endOverlay.open { display: flex; }
+  .endBox h2 { margin: 0 0 8px; font-size: 1.35rem; }
+  #endReason { margin: 0 0 6px; color: #cbd5e1; }
+  #endScore { margin: 0 0 14px; font-weight: 600; color: #facc15; }
+  .endBtns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
   .readyBox { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px 28px; text-align: center; max-width: min(92vw, 420px); }
   .readyBox h2 { margin: 0 0 8px; font-size: 1.25rem; }
   #readyCount { font-size: 3.2rem; font-weight: 800; color: #38bdf8; line-height: 1.1; margin: 6px 0; }
@@ -71,12 +78,14 @@
   .nameRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   #nameInput { flex: 1 1 200px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; padding: 9px 10px; font-size: 1rem; }
   #btnSaveName { margin-top: 14px; }
+
+  .title-logo { width: 28px; height: 28px; vertical-align: -6px; margin-right: 8px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <h1>♟️ Cờ vua</h1>
+    <h1><img class="title-logo" src="logo.svg" alt="gemgem">♟️ Cờ vua</h1>
     <a class="btn" href="index.html">← Về trang chủ</a>
   </header>
 
@@ -122,6 +131,18 @@
     <div class="readyLine" id="readyMine">Bạn: Chưa sẵn sàng</div>
     <div class="readyLine" id="readyOpp">Đối thủ: Chưa sẵn sàng</div>
     <button class="btn primary" id="btnReady" type="button">✅ Sẵn sàng</button>
+  </div>
+</div>
+
+<div id="endOverlay">
+  <div class="readyBox endBox">
+    <h2 id="endTitle">🏆 Thắng!</h2>
+    <p id="endReason"></p>
+    <p id="endScore"></p>
+    <div class="endBtns">
+      <button class="btn primary" id="btnEndRematch" type="button">Ván mới</button>
+      <button class="btn" id="btnEndClose" type="button">Đóng</button>
+    </div>
   </div>
 </div>
 
@@ -518,7 +539,56 @@ function countResultIfNeeded() {
   }
   renderScore();
   if (IS_HOST) broadcastSpec({ type: 'score', score: { ...score } }); // khán giả cập nhật tỉ số ngay khi ván kết thúc
+  syncEndPopup(); // tỉ số vừa đổi: làm mới nội dung popup kết thúc (nếu đang hiện)
 }
+
+/* ================== Popup kết thúc ván ==================
+   Hiện đúng một lần cho mỗi ván kết thúc (nhận diện bằng token ván):
+   đồng bộ lại trạng thái 'over' không hiện lại; người dùng bấm Đóng thì
+   không tự bật lại; ván mới bắt đầu thì tự đóng. */
+const endOverlay = document.getElementById('endOverlay');
+const endTitleEl = document.getElementById('endTitle');
+const endReasonEl = document.getElementById('endReason');
+const endScoreEl = document.getElementById('endScore');
+const btnEndRematch = document.getElementById('btnEndRematch');
+const btnEndClose = document.getElementById('btnEndClose');
+let endPopupKey = null;
+let endPopupDismissed = false;
+
+function endWinnerName(color) {
+  return ONLINE ? playerNameForColor(color) : colorName(color);
+}
+function endPopupContent() {
+  if (endReason === 'checkmate') return { title: '🏆 ' + endWinnerName(winner) + ' thắng!', reason: 'Chiếu hết — ván đấu đã kết thúc.' };
+  if (endReason === 'resign') return { title: '🏆 ' + endWinnerName(opp(resignBy)) + ' thắng!', reason: endWinnerName(resignBy) + ' đã xin thua.' };
+  if (endReason === 'stalemate') return { title: '🤝 Hòa!', reason: 'Thế bí — bên đến lượt không còn nước đi hợp lệ.' };
+  if (endReason === 'material') return { title: '🤝 Hòa!', reason: 'Không đủ quân trên bàn để chiếu hết.' };
+  return { title: '🏆 Ván đấu kết thúc!', reason: '' };
+}
+function hideEndPopup() {
+  endOverlay.classList.remove('open');
+  endPopupKey = null;
+  endPopupDismissed = false;
+}
+function syncEndPopup() {
+  if (!gameOver) {
+    if (endPopupKey !== null || endOverlay.classList.contains('open')) hideEndPopup();
+    return;
+  }
+  const key = (gameToken || 'local') + '|' + (endReason || '') + '|' + (winner || '') + '|' + (resignBy || '');
+  if (key !== endPopupKey) { endPopupKey = key; endPopupDismissed = false; }
+  if (endPopupDismissed) return;
+  const c = endPopupContent();
+  endTitleEl.textContent = c.title;
+  endReasonEl.textContent = c.reason;
+  const sc = scoreEl.textContent;
+  endScoreEl.textContent = sc;
+  endScoreEl.style.display = sc ? '' : 'none';
+  btnEndRematch.style.display = isSpectator ? 'none' : '';
+  endOverlay.classList.add('open');
+}
+btnEndClose.addEventListener('click', () => { endPopupDismissed = true; endOverlay.classList.remove('open'); });
+btnEndRematch.addEventListener('click', () => { document.getElementById('btnRestart').click(); });
 
 function updateStatus() {
   if (gameOver) {
@@ -530,12 +600,14 @@ function updateStatus() {
     else if (endReason === 'resign') setStatus(ONLINE
       ? '🏳️ ' + playerNameForColor(resignBy) + ' xin thua — ' + playerNameForColor(opp(resignBy)) + ' thắng!'
       : '🏳️ ' + colorName(resignBy) + ' xin thua — ' + colorName(opp(resignBy)) + ' thắng!');
+    syncEndPopup();
     return;
   }
   if (isSpectator) {
     setStatus(specLive
       ? '👁 Bạn đang xem ván này — Lượt ' + playerNameForColor(S.turn) + ' (' + colorName(S.turn) + ')' + (inCheck(S, S.turn) ? ' — đang bị chiếu!' : '')
       : '👁 Bạn đang xem ván này — đang chờ hai người chơi bắt đầu ván…');
+    syncEndPopup();
     return;
   }
   const chk = inCheck(S, S.turn) ? ' — đang bị chiếu!' : '';
@@ -546,6 +618,7 @@ function updateStatus() {
       ? 'Lượt của bạn — ' + colorName(S.turn) + chk
       : 'Chờ ' + oppDisplayName() + '... (' + colorName(S.turn) + ')' + chk);
   }
+  syncEndPopup();
 }
 
 function renderMoves() {
@@ -962,7 +1035,7 @@ function onSpecData(d) {
   } else if (d.type === 'start') {
     applyStartLocal(d);
   } else if (d.type === 'score') {
-    if (d.score) { score = { host: d.score.host | 0, guest: d.score.guest | 0, draws: d.score.draws | 0 }; renderScore(); }
+    if (d.score) { score = { host: d.score.host | 0, guest: d.score.guest | 0, draws: d.score.draws | 0 }; renderScore(); syncEndPopup(); }
   } else if (d.type === 'names') {
     applyNames(d.names);
   } else if (d.type === 'resign') {
