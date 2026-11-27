@@ -109,8 +109,17 @@
   </div>
 
   <div class="card">
+    <h2>🔤 Nối chữ tiếng Anh</h2>
+    <p>Chơi 2–6 người: nối từ tiếng Anh theo chữ cái cuối, không được lặp lại từ đã nói — sai hoặc hết giờ mất 1 ❤, còn sống sót cuối cùng là thắng.</p>
+    <div class="row">
+      <button class="btn-primary" onclick="createRoom('W','wordchain.html')">Tạo phòng</button>
+      <a class="btn btn-ghost" href="wordchain.html?local=1">Chơi 2–6 người cùng máy</a>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>🔑 Vào phòng bằng mã</h2>
-    <p>Nhận được mã phòng từ bạn bè? Nhập vào đây (mã bắt đầu bằng V = cờ vua, T = cờ tướng, C = cờ caro, N = cờ cá ngựa, B = bắn tàu, X = xì dách).</p>
+    <p>Nhận được mã phòng từ bạn bè? Nhập vào đây (mã bắt đầu bằng V = cờ vua, T = cờ tướng, C = cờ caro, N = cờ cá ngựa, B = bắn tàu, X = xì dách, W = nối chữ).</p>
     <div class="row">
       <input id="code" maxlength="6" placeholder="Ví dụ: VAB12C" autocomplete="off">
       <button class="btn-primary" onclick="joinRoom()">Vào phòng</button>
@@ -122,7 +131,7 @@
 </main>
 <script>
   var ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  var PAGES = { V: 'chess.html', T: 'xiangqi.html', C: 'caro.html', N: 'ngua.html', B: 'battleship.html', X: 'xidach.html' };
+  var PAGES = { V: 'chess.html', T: 'xiangqi.html', C: 'caro.html', N: 'ngua.html', B: 'battleship.html', X: 'xidach.html', W: 'wordchain.html' };
   function randomCode(prefix) {
     var s = prefix;
     for (var i = 0; i < 5; i++) s += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
@@ -136,7 +145,7 @@
     var err = document.getElementById('err');
     var page = PAGES[code.charAt(0)];
     if (!page || code.length !== 6) {
-      err.textContent = 'Mã phòng chưa đúng — mã gồm 6 ký tự, bắt đầu bằng V, T, C, N, B hoặc X.';
+      err.textContent = 'Mã phòng chưa đúng — mã gồm 6 ký tự, bắt đầu bằng V, T, C, N, B, X hoặc W.';
       return;
     }
     err.textContent = '';
